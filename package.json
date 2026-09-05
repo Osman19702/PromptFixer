@@ -1,0 +1,96 @@
+{
+  "name": "promptfixer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Lint, score and rewrite LLM prompts. Desktop app with a built-in local model; cloud providers optional.",
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "node --watch server/index.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test server/*.test.js electron/*.test.js scripts/*.test.js vite.config.test.js",
+    "setup": "node scripts/setup-model.js",
+    "desktop": "npm run build && electron .",
+    "desktop:dev": "electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "lint:prompts": "node scripts/lint-prompts.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-llama-cpp": "^3.20.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "node-llama-cpp@3.20.0": true,
+    "electron@44.1.1": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "main": "electron/main.js",
+  "build": {
+    "appId": "com.promptfixer.desktop",
+    "productName": "PromptFixer",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "server/**",
+      "electron/**",
+      "package.json",
+      "!server/data/**",
+      "!server/*.test.js",
+      "!electron/*.test.js",
+      "!node_modules/node-llama-cpp/llama/localBuilds/**",
+      "!node_modules/@node-llama-cpp/win-arm64/**",
+      "!node_modules/node-llama-cpp/llama/gitRelease.bundle",
+      "!node_modules/node-llama-cpp/templates/**"
+    ],
+    "asarUnpack": [
+      "node_modules/node-llama-cpp/**",
+      "node_modules/@node-llama-cpp/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    }
+  }
+}
