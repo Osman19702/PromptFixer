@@ -4,6 +4,16 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Lint, score and rewrite LLM prompts. Desktop app with a built-in local model; cloud providers optional.",
+  "author": "Osman Turalioglu",
+  "license": "MIT",
+  "homepage": "https://github.com/Osman19702/PromptFixer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Osman19702/PromptFixer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Osman19702/PromptFixer/issues"
+  },
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "node --watch server/index.js",
@@ -20,6 +30,7 @@
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux",
+    "release:checksums": "node scripts/release-checksums.js",
     "lint:prompts": "node scripts/lint-prompts.js",
     "test:acceptance": "node --test acceptance/*.acceptance.test.js",
     "test:trace": "node acceptance/trace.js",
@@ -58,6 +69,12 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Osman19702",
+      "repo": "PromptFixer",
+      "releaseType": "draft"
     },
     "files": [
       "dist/**",

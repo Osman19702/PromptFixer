@@ -2,7 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
-server/data/library.json
+server/data/
 *.log
 .DS_Store
 release/

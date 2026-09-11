@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- PromptFixer app icon: a prompt chevron (blue) and a fixed-it tick (green) on the app's dark panel colours. -->
+  <rect width="256" height="256" rx="56" fill="#0b0e14"/>
+  <rect x="24" y="24" width="208" height="208" rx="44" fill="#141a24" stroke="#232c3a" stroke-width="4"/>
+  <path d="M64 88 L112 128 L64 168" fill="none" stroke="#6ea8fe" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M128 176 L152 200 L200 136" fill="none" stroke="#3ecf8e" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

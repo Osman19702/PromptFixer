@@ -10,6 +10,20 @@ better, with a word-level diff and a change log explaining every edit.
 Cloud providers (Anthropic, OpenAI, OpenRouter, Gemini, Ollama, any OpenAI-compatible endpoint)
 remain available as an optional switch — but nothing requires them.
 
+## Download (Windows)
+
+**[PromptFixer-0.1.0-win-x64.exe](https://github.com/Osman19702/PromptFixer/releases/download/v0.1.0/PromptFixer-0.1.0-win-x64.exe)**
+(339 MiB, Windows 10/11 64-bit) from the
+[v0.1.0 release](https://github.com/Osman19702/PromptFixer/releases/tag/v0.1.0). The 2.5 GB model
+downloads on first run; after that the app works offline.
+
+- SHA-256: `4f49a75fa3b01cbf98cee56100e2afdc14b42b56b1eef3853e47afc010194c2e`, also in the release's
+  [`SHA256SUMS.txt`](https://github.com/Osman19702/PromptFixer/releases/download/v0.1.0/SHA256SUMS.txt).
+  Check it in PowerShell with `(Get-FileHash .\PromptFixer-0.1.0-win-x64.exe).Hash.ToLower()`.
+- The installer is not code-signed yet, so SmartScreen shows "Windows protected your PC": click
+  **More info**, then **Run anyway**, once the hash matches.
+- Full guide: [docs/INSTALL.md](docs/INSTALL.md).
+
 ## Quick start (desktop)
 
 Three commands. Needs Node 20+ and ~3 GB of disk.
@@ -116,6 +130,7 @@ most of the way for free.
 | `npm run desktop` | Build the UI and open the desktop app |
 | `npm run desktop:dev` | Open the desktop app without rebuilding |
 | `npm run dist:win` | Build a Windows installer into `release/` (`dist:mac`, `dist:linux` likewise) |
+| `npm run release:checksums` | Write `release/SHA256SUMS.txt` for the built installers (`-- --check` verifies it; `-- --dir <folder>` targets another folder) |
 | `npm run dev` | Browser mode: API (watch) + Vite dev server at http://localhost:5173 |
 | `npm start` | Browser mode: serve the built app + API from one port (8787) |
 | `npm test` | Unit and component tests — no key, no model download needed |
@@ -269,8 +284,10 @@ and works offline; `meta.examplesUsed` in the response says how many were used, 
   npm run build && npx electron-builder --win --config.directories.output="$LOCALAPPDATA/PromptFixer/release"
   ```
 
-  Then copy `PromptFixer-*-win-x64.exe` from that folder into `release/`. Or move the project out
-  of the synced folder.
+  Then copy `PromptFixer-*-win-x64.exe` (and its `.blockmap`) from that folder into `release/`,
+  or move the project out of the synced folder. Before publishing, write the checksum file with
+  `npm run release:checksums` (add `-- --dir <folder>` to hash the unsynced folder directly) and
+  attach `SHA256SUMS.txt` to the GitHub release next to the installer.
 
 ## Limits
 

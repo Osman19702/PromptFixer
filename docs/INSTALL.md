@@ -13,10 +13,13 @@ install first, no Node.js, no command line, no account.
 
 ## Install
 
-1. Download **PromptFixer-0.1.0-win-x64.exe** from the link you were given.
+1. Download **PromptFixer-0.1.0-win-x64.exe** from the
+   [v0.1.0 release page](https://github.com/Osman19702/PromptFixer/releases/tag/v0.1.0) or from the
+   download button on [osmanturalioglu.com](https://www.osmanturalioglu.com/).
 2. Double-click it. Windows may show a blue **"Windows protected your PC"** screen because the
-   installer is not yet code-signed. Click **More info**, then **Run anyway**. (If you want to check
-   the file first, its SHA-256 is published next to the download link.)
+   installer is not yet code-signed. Click **More info**, then **Run anyway**. (To check the file
+   first, compare its SHA-256 with the line in `SHA256SUMS.txt` on the same release page. In
+   PowerShell: `(Get-FileHash .\PromptFixer-0.1.0-win-x64.exe).Hash.ToLower()`.)
 3. Choose an install folder or accept the default, and finish. PromptFixer opens by itself and adds a
    Start menu entry.
 
