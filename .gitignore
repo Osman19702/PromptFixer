@@ -7,3 +7,4 @@ server/data/library.json
 .DS_Store
 release/
 .promptfixer/
+acceptance/report/out/

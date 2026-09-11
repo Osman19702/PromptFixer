@@ -1,0 +1,52 @@
+{
+  "defects": [
+    {
+      "scenario": "A8",
+      "title": "\"Missing input\" was no longer detected for the documented example",
+      "detail": "DEMO.md and examples.js say the transcript prompt scores a high-severity \"references input that is not clearly attached\" with Context 24/100. It scored a low \"pasted input is not delimited\", because the heuristic counted the rest of the instruction sentence after \"transcript below\" as pasted input.",
+      "fix": "server/analyze.js: pasted input starts on a new line or after a colon; the rest of the referencing sentence is instruction.",
+      "status": "fixed"
+    },
+    {
+      "scenario": "G2",
+      "title": "An upstream error could carry the API key to the browser",
+      "detail": "A provider whose error body echoes the key had that body forwarded verbatim, in the error response and inside a successful reply's retry warning. The README promises keys never leave the server.",
+      "fix": "server/providers.js redact() blanks every configured key at the source; server/index.js applies it again in the error handler.",
+      "status": "fixed"
+    },
+    {
+      "scenario": "D6",
+      "title": "A saved library example returned verbatim was accepted as the rewrite",
+      "detail": "A parroted example shares enough vocabulary with the prompt to clear the Balanced retention floor, and the leak detector only recognised the <examples> wrapper, so another prompt's text was handed back as the user's rewrite.",
+      "fix": "server/metaprompt.js validateRewrite() receives the examples and treats an exact match with any example as a leak; after two attempts the user gets their original back with a warning naming the library toggle.",
+      "status": "fixed"
+    },
+    {
+      "scenario": "K6 / L3",
+      "title": "API errors did not all have the same shape",
+      "detail": "An unknown /api path returned Express's HTML \"Cannot GET\" page while every other failure is JSON, and the JSON envelope dropped code/provider when undefined.",
+      "fix": "server/index.js: JSON 404 for any unmatched /api path through the normal error handler; code and provider always present (null when unknown).",
+      "status": "fixed"
+    },
+    {
+      "scenario": "H12",
+      "title": "Tab count badges were below AA contrast",
+      "detail": "The count badge on an unselected tab (\"Issues 11\") used --text-faint on --panel-3: 4.18:1, below the 4.5:1 the token's own comment promises. Found by measuring every rendered text node in Chromium, not by reading the tokens.",
+      "fix": "src/styles.css: .tab .count uses --text-dim.",
+      "status": "fixed"
+    },
+    {
+      "scenario": "H13",
+      "title": "The results pane header pushed Save off the page at 1024px wide",
+      "detail": "Tabs, the history control and Copy/Apply/Save sit in a non-wrapping flex row; at 1024px the Save button ended at 1055px and the whole page scrolled horizontally.",
+      "fix": "src/styles.css: .pane-head wraps.",
+      "status": "fixed"
+    }
+  ],
+  "observations": [
+    "Ollama shows as configured whenever its default URL is set, even with nothing listening (G1 is stricter than the code; a decision for the three amigos).",
+    "Demo numbers in DEMO.md / examples.js are stale after the A8 fix (transcript example is now 66/C, not 62/D); the definition of done says DEMO.md is regenerated when the linter changes.",
+    "server/data/library.json.tmp-27896 is a crashed-write leftover that is committed to git; it should be removed with git rm.",
+    "H8: \"download in progress\" and \"cancel settling\" sub-cases need a model file and stay nightly; the other three states are asserted in the browser."
+  ]
+}

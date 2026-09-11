@@ -28,6 +28,22 @@ class ProviderError extends Error {
   }
 }
 
+const KEY_ENVS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GOOGLE_API_KEY', 'COMPATIBLE_API_KEY']
+
+/**
+ * Blank out every configured key in a piece of text. Some endpoints echo the
+ * key back in their error body ("invalid key sk-…"), and that body becomes
+ * the message the browser shows — which is the one place a key must never go.
+ */
+export function redact(text) {
+  let out = String(text ?? '')
+  for (const name of KEY_ENVS) {
+    const key = process.env[name]
+    if (key && key.length >= 8) out = out.split(key).join('[redacted]')
+  }
+  return out
+}
+
 async function request(url, init = {}, { provider, timeoutMs = defaultTimeoutMs(), signal } = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -51,7 +67,7 @@ async function request(url, init = {}, { provider, timeoutMs = defaultTimeoutMs(
       })
     }
     throw new ProviderError(
-      `${provider}: could not reach the API (${err.cause?.code || err.message}).`,
+      `${provider}: could not reach the API (${redact(err.cause?.code || err.message)}).`,
       { provider, retryable: true }
     )
   } finally {
@@ -73,7 +89,7 @@ async function request(url, init = {}, { provider, timeoutMs = defaultTimeoutMs(
       body?.detail ||
       (typeof body?.raw === 'string' ? body.raw.slice(0, 400) : '') ||
       res.statusText
-    throw new ProviderError(`${provider}: ${res.status} ${detail}`, {
+    throw new ProviderError(`${provider}: ${res.status} ${redact(detail)}`, {
       status: res.status,
       provider,
       retryable: res.status === 429 || res.status >= 500,

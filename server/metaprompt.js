@@ -302,7 +302,14 @@ export function validateRewrite(original, fixed, options = {}) {
   // A marker the user themselves wrote is not a leak, and neither is a list
   // shaped like our findings when their prompt already had one — a model that
   // edits such a line must not be punished for it.
+  // A library example handed back verbatim is somebody else's prompt, not a
+  // rewrite of this one — and it can share enough words to pass retention.
+  const flat = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+  const copiedExample =
+    flat(out) !== '' &&
+    (options.examples || []).some((e) => flat(e.before) === flat(out) || flat(e.after) === flat(out))
   const leaked =
+    copiedExample ||
     LEAK_MARKERS.some((m) => out.includes(m) && !src.includes(m)) ||
     (hasFindingLines(out) && !hasFindingLines(src))
   const originalWords = wordCount(src)
@@ -310,7 +317,11 @@ export function validateRewrite(original, fixed, options = {}) {
   const limit = maxWords(src, options.strength)
 
   const reasons = []
-  if (leaked) {
+  if (copiedExample) {
+    reasons.push(
+      "it returned one of the earlier examples instead of a rewrite — the examples show how much to change, not what to write; edit the user's own prompt"
+    )
+  } else if (leaked) {
     reasons.push(
       'it copied the instructions (the STRENGTH line, the linter findings or the closing line) into fixedPrompt — only the improved prompt belongs there'
     )
@@ -331,6 +342,7 @@ export function validateRewrite(original, fixed, options = {}) {
     retention: kept,
     minRetention,
     leaked,
+    copiedExample,
     words,
     originalWords,
     maxWords: limit,

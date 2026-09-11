@@ -431,7 +431,12 @@ export function analyzePrompt(rawPrompt, options = {}) {
     // most common prompt shape there is. The input is present; what is
     // missing is only the fence, and that is a minor structure point, not
     // missing context.
-    const trailingWords = (text.slice(refMatch.index + refMatch[0].length).match(/\S+/g) || []).length
+    // Pasted input starts on a new line or after a colon. The rest of the
+    // sentence that mentions "the transcript below" is still instruction —
+    // "…below and tell me what the main problems are" is not the transcript.
+    const afterRef = text.slice(refMatch.index + refMatch[0].length)
+    const boundary = afterRef.search(/\r?\n|^\s*:/)
+    const trailingWords = boundary === -1 ? 0 : (afterRef.slice(boundary).match(/\S+/g) || []).length
     if (trailingWords >= 15) {
       add({
         id: 'undelimited-input',

@@ -62,6 +62,8 @@ PromptFixer/
 │   ├── components/        ScorePanel, IssueList, DiffView, Library
 │   └── lib/               api.ts (client), diff.ts (word-level LCS diff)
 ├── docs/
+│   ├── INSTALL.md         End-user install guide for the Windows download (no Node or npm needed)
+│   ├── ATDD.md            Acceptance test-driven development: strategy and the acceptance scenarios
 │   └── LOCAL-MODEL.md     Model choice, measured performance, and the train/fine-tune analysis
 ├── dist/                  Built frontend (npm run build) — served by the server
 ├── .env.example           Optional configuration
@@ -116,7 +118,10 @@ most of the way for free.
 | `npm run dist:win` | Build a Windows installer into `release/` (`dist:mac`, `dist:linux` likewise) |
 | `npm run dev` | Browser mode: API (watch) + Vite dev server at http://localhost:5173 |
 | `npm start` | Browser mode: serve the built app + API from one port (8787) |
-| `npm test` | End-to-end API tests and CLI tests — no key, no model download needed |
+| `npm test` | Unit and component tests — no key, no model download needed |
+| `npm run test:acceptance` | The acceptance scenarios in `acceptance/` (see `docs/ATDD.md`) — API, CLI, browser (Playwright) and Electron; needs `npm run build` first |
+| `npm run test:trace` | Traceability matrix: every scenario in `acceptance/features/` against its automated test |
+| `npm run test:report` | Run the acceptance suite and print the results to `docs/ATDD-RESULTS.pdf` |
 | `npm run typecheck` | TypeScript, no emit |
 
 ## Lint prompts in CI

@@ -19,7 +19,7 @@ import {
   scrubLeakedInstructions,
   validateRewrite,
 } from './metaprompt.js'
-import { ProviderError, complete, listModels, providerStatus } from './providers.js'
+import { ProviderError, complete, listModels, providerStatus, redact } from './providers.js'
 import * as store from './store.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -197,7 +197,7 @@ app.post(
       usage.outputTokens += completion.usage?.outputTokens || 0
       modelName = completion.model
       const result = normalizeResult(extractJson(completion.text), { originalPrompt: prompt })
-      return { result, check: validateRewrite(prompt, result.fixedPrompt, options) }
+      return { result, check: validateRewrite(prompt, result.fixedPrompt, { ...options, examples }) }
     }
 
     let best = await attempt()
@@ -225,11 +225,14 @@ app.post(
         // user. If nothing survives, the whole reply was our message — show
         // the original rather than an empty rewrite.
         warningKind = 'leak'
-        const scrubbed = scrubLeakedInstructions(fixedPrompt, prompt)
+        // A copied example has nothing of the user's in it to keep.
+        const scrubbed = best.check.copiedExample ? '' : scrubLeakedInstructions(fixedPrompt, prompt)
         fixedPrompt = scrubbed || prompt
-        warning = scrubbed
-          ? 'The model copied its instructions into the rewrite twice; the boilerplate was stripped, so check the result carefully.'
-          : 'The model returned its instructions instead of a rewrite twice; nothing usable was left, so your original is shown unchanged.'
+        warning = best.check.copiedExample
+          ? 'The model returned one of your saved examples instead of a rewrite twice, so your original is shown unchanged. Try again, or turn off "Use my library as examples" for this prompt.'
+          : scrubbed
+            ? 'The model copied its instructions into the rewrite twice; the boilerplate was stripped, so check the result carefully.'
+            : 'The model returned its instructions instead of a rewrite twice; nothing usable was left, so your original is shown unchanged.'
       } else if (best.check.retention < best.check.minRetention) {
         warningKind = 'retention'
         const kept = Math.round(best.check.retention * 100)
@@ -362,6 +365,14 @@ app.post(
   })
 )
 
+// An unknown API path is an API error like any other — JSON, through the
+// handler below — not Express's HTML "Cannot GET" page.
+app.use('/api', (req, _res, next) => {
+  const err = new Error(`No such route: ${req.method} /api${req.path}`)
+  err.status = 404
+  next(err)
+})
+
 // --- static build (npm run build && npm start) -------------------------------
 
 const dist = path.join(__dirname, '..', 'dist')
@@ -377,9 +388,12 @@ app.use((err, _req, res, _next) => {
   const status = err instanceof ProviderError ? err.status || 502 : err.status || 500
   if (status >= 500 && !known) console.error(err)
   res.status(status).json({
-    error: err.message || 'Something went wrong.',
-    provider: err.provider,
-    code: err.code,
+    // Belt and braces: providers.js redacts at the source, but no message
+    // from any path may carry a key to the browser.
+    error: redact(err.message || 'Something went wrong.'),
+    // Always present so the client can rely on the shape, null when unknown.
+    provider: err.provider ?? null,
+    code: err.code ?? null,
     retryable: !!err.retryable,
   })
 })

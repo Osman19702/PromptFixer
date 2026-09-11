@@ -301,8 +301,11 @@ select:disabled {
 
 .pane-head {
   display: flex;
+  /* Tabs, history and the result actions do not fit one row below ~1100px;
+     wrapping keeps them reachable instead of pushing Save off the page. */
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 10px 16px;
   flex: 0 0 auto;
   border-bottom: 1px solid var(--border-soft);
@@ -534,7 +537,8 @@ select:disabled {
   padding: 0 5px;
   border-radius: 999px;
   background: var(--panel-3);
-  color: var(--text-faint);
+  /* --text-faint is only 4.2:1 on --panel-3; the badge needs the dim shade for AA. */
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 .tab[aria-selected='true'] .count {

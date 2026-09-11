@@ -20,7 +20,11 @@
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux",
-    "lint:prompts": "node scripts/lint-prompts.js"
+    "lint:prompts": "node scripts/lint-prompts.js",
+    "test:acceptance": "node --test acceptance/*.acceptance.test.js",
+    "test:trace": "node acceptance/trace.js",
+    "test:all": "npm test && npm run test:acceptance && npm run test:trace",
+    "test:report": "node acceptance/report/run.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -35,6 +39,7 @@
     "concurrently": "^9.1.2",
     "electron": "^44.1.1",
     "electron-builder": "^26.15.3",
+    "playwright": "^1.63.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.7.3",
