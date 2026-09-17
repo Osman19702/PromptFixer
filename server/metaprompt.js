@@ -253,6 +253,18 @@ const LEAK_MARKERS = [
   '</examples>',
   'These are earlier rewrites the user kept',
 ]
+// The marks block of a "fix again". As with the examples, only the wrappers
+// and the preamble count: a user's own prompt may well use <keep> or <change>
+// tags, so the bare passage tags identify nothing. A list of its own because
+// these only mean a leak when the message had a marks block in it: on an
+// ordinary fix a <user_feedback> slot is something a rewrite may well contain.
+const FEEDBACK_LEAK_MARKERS = [
+  '<previous_rewrite>',
+  '</previous_rewrite>',
+  '<user_feedback>',
+  '</user_feedback>',
+  'The user reviewed your previous rewrite',
+]
 const FINDING_LINE = /^\s*-\s*\[(high|medium|low)\/[a-z]+\]/i
 const hasFindingLines = (text) => String(text).split('\n').some((l) => FINDING_LINE.test(l))
 
@@ -267,19 +279,51 @@ const LEAK_BLOCKS = [
   // so only dropping the whole block gets them out.
   /<examples>[\s\S]*?<\/examples>/g,
 ]
+// Same for the marks block of a "fix again": the previous rewrite and the
+// marked passages are plain prose, and a pasted copy would double the rewrite.
+const FEEDBACK_LEAK_BLOCKS = [
+  /<previous_rewrite>[\s\S]*?<\/previous_rewrite>/g,
+  /<user_feedback>[\s\S]*?<\/user_feedback>/g,
+]
+// The marks block as buildUserPrompt() writes it: the wrapper, then nothing but
+// passages. This is what tells our block from a <user_feedback> slot of the
+// user's own once the bare tags are theirs — counting the tags would not: an
+// honest rewrite may mention the tag once more in a sentence, and a model can
+// paste the marks into the slot without adding a tag. The closing tag is
+// optional because a reply that ran out of tokens stops mid-block.
+const MARKS_BLOCK = /<user_feedback>\s*(?:<(keep|change)>[\s\S]*?<\/\1>\s*)+(?:<\/user_feedback>)?/g
 
 /**
  * Remove our own boilerplate if a model pasted it into the rewrite. Last
  * resort, after a retry. Anything the user's original already contains is
  * theirs and stays — a marker they wrote, or a whole bullet list shaped like
  * our findings — even when the model has edited the line.
+ *
+ * @param feedback  The marks of a "fix again", when the message had any. Only
+ *                  then is the marks block something a model can have pasted;
+ *                  without it the scrub is what it was before marks existed.
  */
-export function scrubLeakedInstructions(text, original = '') {
+export function scrubLeakedInstructions(text, original = '', feedback) {
   const src = String(original)
+  const marks = usableFeedback(feedback)
+  // The rewrite the user marked is theirs too, and the model was told to start
+  // from it: a <user_feedback> slot in there has to survive being fixed again.
+  const theirs = (s) => src.includes(s) || marks.previous.includes(s)
   const markers = LEAK_MARKERS.filter((m) => !src.includes(m))
+  if (marks) markers.push(...FEEDBACK_LEAK_MARKERS.filter((m) => !theirs(m)))
   const dropFindingLines = !hasFindingLines(src)
   let out = String(text)
   for (const block of LEAK_BLOCKS) out = out.replace(block, (m) => (src.includes(m) ? m : ''))
+  if (marks) {
+    const drop = (m) => (theirs(m) ? m : '')
+    const [previousRewrite, userFeedback] = FEEDBACK_LEAK_BLOCKS
+    out = out.replace(previousRewrite, drop).replace(MARKS_BLOCK, drop)
+    // Any other <user_feedback> block is ours only while the tags are: once the
+    // user has a slot of their own, a block that is not the marks block is that
+    // slot with its body reworded, or a sentence that names the tag running
+    // into it — and dropping either would take the user's slot with it.
+    if (!(theirs('<user_feedback>') && theirs('</user_feedback>'))) out = out.replace(userFeedback, drop)
+  }
   return out
     .split('\n')
     .filter((line) => !markers.some((m) => line.includes(m)) && !(dropFindingLines && FINDING_LINE.test(line)))
@@ -288,11 +332,99 @@ export function scrubLeakedInstructions(text, original = '') {
     .trim()
 }
 
+/** Runs of whitespace collapsed to one space — the form marked passages are compared in. */
+export const collapseSpace = (text) => String(text ?? '').replace(/\s+/g, ' ').trim()
+
+/**
+ * Whether `passage` occurs in `text`. Case-sensitive, but blind to how the
+ * whitespace falls: a model that re-wraps a kept sentence has still kept it,
+ * and a selection dragged across a line break still points at its text.
+ */
+export function containsPassage(text, passage) {
+  const needle = collapseSpace(passage)
+  return needle !== '' && collapseSpace(text).includes(needle)
+}
+
+/**
+ * Where `needle` starts in `hay`, left to right. Occurrences never overlap
+ * ("aa" is in "aaa" once) unless `overlapping` asks for every place the needle
+ * could sit. An indexOf() loop would do, but V8's search goes quadratic on a
+ * crafted needle — 20 ms for one 2,000-character mark against a 60k rewrite,
+ * and a request brings dozens of marks. This one (Knuth–Morris–Pratt) reads
+ * each character once whatever it is given.
+ */
+export function passageStarts(hay, needle, overlapping = false) {
+  const h = String(hay)
+  const n = String(needle)
+  const found = []
+  if (!n || n.length > h.length) return found
+  // fall[i]: how much of the needle still matches once n[0..i] has and the next character does not.
+  const fall = new Int32Array(n.length)
+  for (let i = 1, k = 0; i < n.length; i++) {
+    while (k && n.charCodeAt(i) !== n.charCodeAt(k)) k = fall[k - 1]
+    if (n.charCodeAt(i) === n.charCodeAt(k)) k++
+    fall[i] = k
+  }
+  for (let i = 0, k = 0; i < h.length; i++) {
+    const c = h.charCodeAt(i)
+    while (k && c !== n.charCodeAt(k)) k = fall[k - 1]
+    if (c === n.charCodeAt(k)) k++
+    if (k === n.length) {
+      found.push(i + 1 - n.length)
+      k = overlapping ? fall[k - 1] : 0
+    }
+  }
+  return found
+}
+
+/**
+ * The marks a rewrite did not honour, as `{ missingKeep, unchangedChange }`.
+ * The one place this is decided: the guard asks here, and the `meta.feedback`
+ * the user is shown is the guard's own answer, so they cannot disagree.
+ *
+ * A kept passage has to be there. A passage to change has to occur FEWER times
+ * than in the rewrite it was marked on — marks travel as text, not positions,
+ * so "the words are still somewhere" proves nothing: they may occur three
+ * times with one marked, or stand inside a passage the user asked to keep.
+ */
+export function missedMarks(fixed, feedback) {
+  const marks = usableFeedback(feedback)
+  if (!marks) return { missingKeep: [], unchangedChange: [] }
+  const out = collapseSpace(fixed)
+  const before = collapseSpace(marks.previous)
+  const count = (text, passage) => passageStarts(text, collapseSpace(passage)).length
+  return {
+    missingKeep: marks.keep.filter((p) => !count(out, p)),
+    unchangedChange: marks.change.filter((p) => {
+      const left = count(out, p)
+      // Gone altogether is changed, even if the mark pointed at nothing.
+      return left > 0 && left >= count(before, p)
+    }),
+  }
+}
+
+// A rejection reason quotes the passages it is about, but the retry message
+// still carries them in full inside <user_feedback> — the quote only has to
+// say which one, and forty marks must not turn the reason into a second prompt.
+const QUOTE_MAX_CHARS = 120
+const QUOTED_PASSAGES = 3
+const quoted = (passages) => {
+  // Collapsed, so the rejection sentence stays on the one line the scrub drops;
+  // escaped like the passage in its tag, so both spellings of it agree.
+  const shown = passages
+    .slice(0, QUOTED_PASSAGES)
+    .map((p) => `"${clip(collapseSpace(p), QUOTE_MAX_CHARS).replace(PASSAGE_TAGS, '&lt;')}"`)
+  const rest = passages.length - shown.length
+  return shown.join(', ') + (rest > 0 ? ` and ${rest} more` : '')
+}
+
 /**
  * Checks a rewrite against what the chosen strength allows: it must keep enough
  * of the user's words, it must not grow past the strength's ceiling, and it
- * must not contain our instructions. `reasons` are written for the model —
- * they go straight into the retry message.
+ * must not contain our instructions. On a "fix again" (`options.feedback`, the
+ * user's marks on an earlier rewrite) it must also honour every mark.
+ * `reasons` are written for the model — they go straight into the retry
+ * message.
  */
 export function validateRewrite(original, fixed, options = {}) {
   const minRetention = MIN_RETENTION[options.strength] ?? MIN_RETENTION.balanced
@@ -308,9 +440,22 @@ export function validateRewrite(original, fixed, options = {}) {
   const copiedExample =
     flat(out) !== '' &&
     (options.examples || []).some((e) => flat(e.before) === flat(out) || flat(e.after) === flat(out))
+  // The marks block can only have been pasted back when the message had one,
+  // and a marker in the rewrite the user marked is theirs, like one in their
+  // prompt: fixing that rewrite again must not be a leak for ever after.
+  const marks = usableFeedback(options.feedback)
+  const theirs = (s) => src.includes(s) || marks.previous.includes(s)
+  // Their tags do not make every block theirs: a rewrite that keeps its own
+  // <user_feedback> slot and has our marks block pasted after it — or into it —
+  // trips no marker, so the block is known by its shape.
+  const pastedMarks =
+    marks !== null &&
+    (FEEDBACK_LEAK_MARKERS.some((m) => out.includes(m) && !theirs(m)) ||
+      (out.match(MARKS_BLOCK) || []).some((block) => !theirs(block)))
   const leaked =
     copiedExample ||
     LEAK_MARKERS.some((m) => out.includes(m) && !src.includes(m)) ||
+    pastedMarks ||
     (hasFindingLines(out) && !hasFindingLines(src))
   const originalWords = wordCount(src)
   const words = wordCount(out)
@@ -336,6 +481,40 @@ export function validateRewrite(original, fixed, options = {}) {
       `it added ${words - originalWords} words of scaffolding — the rewrite has ${words} words, and at this strength at most ${limit} are allowed`
     )
   }
+  // The marks are the most explicit thing the user has said about this text,
+  // so a rewrite that ignores one is rejected like any other failure. A leaked
+  // attempt is never shown as it is — the user gets the scrub of it (see
+  // /api/fix) — so that is the text the marks are judged on: a kept passage
+  // that only survives inside a pasted marks block is not one the user will see.
+  const scrubbed = marks && leaked ? (copiedExample ? '' : scrubLeakedInstructions(out, src, marks)) : out
+  // An attempt with no rewrite in it has honoured nothing: a copied example,
+  // our message with nothing added, or our message around the user's own
+  // prompt. Judged as text, that last one would pass for a rewrite that dropped
+  // every passage to change, and beat a usable retry on retention. The pasted
+  // tag is what tells it from a model that went back to the original on
+  // purpose and let one stray line of ours in — that reply did follow the marks.
+  // Either tag: the tail of the message, pasted from the prompt down, has only the closing one.
+  const pastedOriginal = ['<original_prompt>', '</original_prompt>'].some((tag) => out.includes(tag) && !src.includes(tag))
+  const noRewrite =
+    Boolean(marks && leaked) &&
+    (scrubbed === '' || (pastedOriginal && collapseSpace(scrubbed) === collapseSpace(src)))
+  const { missingKeep, unchangedChange } = noRewrite
+    ? { missingKeep: marks.keep, unchangedChange: marks.change }
+    : missedMarks(scrubbed, marks)
+  if (missingKeep.length) {
+    reasons.push(
+      missingKeep.length === 1
+        ? `it dropped a passage the user marked to keep — ${quoted(missingKeep)} must appear in fixedPrompt word for word`
+        : `it dropped ${missingKeep.length} passages the user marked to keep — ${quoted(missingKeep)} must each appear in fixedPrompt word for word`
+    )
+  }
+  if (unchangedChange.length) {
+    reasons.push(
+      unchangedChange.length === 1
+        ? `it left a passage the user marked for change as it was — ${quoted(unchangedChange)} must be reworded, replaced or removed`
+        : `it left ${unchangedChange.length} passages the user marked for change as they were — ${quoted(unchangedChange)} must each be reworded, replaced or removed`
+    )
+  }
   return {
     ok: reasons.length === 0,
     reasons,
@@ -346,19 +525,25 @@ export function validateRewrite(original, fixed, options = {}) {
     words,
     originalWords,
     maxWords: limit,
+    missingKeep,
+    unchangedChange,
   }
 }
 
 /**
  * Which of two attempts to show the user. Clean beats un-leaked beats leaked;
- * ties go to whichever kept more of the user's words, and the first attempt
- * wins an exact tie — the retry has to earn its place.
+ * within a rank the attempt that ignored fewer of the user's marks wins, then
+ * whichever kept more of the user's words, and the first attempt wins an exact
+ * tie — the retry has to earn its place.
  */
 export function pickBest(first, second) {
   if (!second) return first
   const rank = (a) => (a.check.ok ? 2 : a.check.leaked ? 0 : 1)
-  if (rank(second) > rank(first)) return second
-  if (rank(second) === rank(first) && second.check.retention > first.check.retention) return second
+  // Zero without feedback, so an ordinary fix is ranked exactly as before.
+  const misses = (a) => (a.check.missingKeep?.length || 0) + (a.check.unchangedChange?.length || 0)
+  if (rank(second) !== rank(first)) return rank(second) > rank(first) ? second : first
+  if (misses(second) !== misses(first)) return misses(second) < misses(first) ? second : first
+  if (second.check.retention > first.check.retention) return second
   return first
 }
 
@@ -500,19 +685,116 @@ const clip = (text, max) => {
   return s.length > max ? `${s.slice(0, max)}…` : s
 }
 
+const OPENING =
+  'You will fix one prompt. Everything inside <instructions> is guidance for you. The text to fix is only what sits inside <original_prompt> at the end — nothing from <instructions> may appear in fixedPrompt.'
+
+// "Nothing from <instructions> may appear" would forbid the very text a "fix
+// again" has to start from, and a 4B model follows the first thing it reads —
+// so the carve-out is made here, in the opening line, not further down.
+const OPENING_WITH_FEEDBACK =
+  "You will fix one prompt. Everything inside <instructions> is guidance for you. The text to fix sits inside <original_prompt> at the end, and you have already rewritten it once: fixedPrompt is that rewrite, the text inside <previous_rewrite>, revised as the user's marks ask. Apart from the text inside <previous_rewrite>, nothing from <instructions> may appear in fixedPrompt."
+
+// A marked passage is the user's text dropped between our tags. If it holds
+// one of those tags itself, the mark would end early and the rest of it would
+// read as instructions; an escaped bracket keeps it a literal.
+// The slash takes its trailing spaces with it: with a \s* on either side of an
+// optional slash, a "<" before a long run of spaces is split every possible
+// way, and one 60k passage held the event loop for seconds.
+const PASSAGE_TAGS = /<(?=\s*(?:\/\s*)?(?:keep|change|user_feedback|previous_rewrite)\s*>)/gi
+// The previous rewrite is only escaped where it could close its own wrapper or
+// fake the marks block: a rewrite that uses <keep> tags of its own should reach
+// the model as it was written.
+const WRAPPER_TAGS = /<(?=\s*(?:\/\s*)?(?:user_feedback|previous_rewrite)\s*>)/gi
+
+/** The user's marks as `{ previous, keep, change }` with at least one passage, or null. */
+function usableFeedback(feedback) {
+  if (!feedback || typeof feedback !== 'object') return null
+  const previous = String(feedback.previous ?? '')
+  const passages = (list) => (Array.isArray(list) ? list : []).map((p) => String(p ?? '').trim()).filter(Boolean)
+  const keep = passages(feedback.keep)
+  const change = passages(feedback.change)
+  return previous.trim() && (keep.length || change.length) ? { previous, keep, change } : null
+}
+
+/**
+ * How the passages to change whose words also stand inside a kept passage sit
+ * in the rewrite they were marked on. Marks are text, not positions, so this
+ * happens whenever the user disliked words in one place and loved a passage
+ * holding them in another — and what the model must be told, and what the
+ * guard will take, depends on where else those words stand:
+ *  - `free`: somewhere on their own. The kept passage wins where it holds
+ *    them, and they are changed where it does not.
+ *  - `repeated`: nowhere on their own, but a kept passage holding them stands
+ *    in a second place, clear of them: two places that read the same, one to
+ *    leave and one to rework. "Change them where they stand on their own"
+ *    would ask for nothing there, and the guard wants one occurrence fewer.
+ *  - `stuck`: the kept passages that make a change impossible — wherever its
+ *    words stand, reworking them would break a kept passage that stands
+ *    nowhere else. Listed for the place that costs the fewest; /api/fix lets
+ *    the change win over these, so neither flag is raised for such a change.
+ * A kept passage counts wherever it could sit, overlapping itself too, as in
+ * /api/fix. One pass over the rewrite for each passage to change, plus the
+ * places of the kept passages that hold it.
+ */
+export function nestedMarks(marks) {
+  const flat = collapseSpace(marks.previous)
+  const keeps = marks.keep.map((text) => ({ text, flat: collapseSpace(text), at: null }))
+  const found = { free: false, repeated: false, stuck: [] }
+  for (const c of marks.change.map(collapseSpace)) {
+    const holders = keeps.filter((k) => passageStarts(k.flat, c).length > 0)
+    for (const k of holders) k.at ??= passageStarts(flat, k.flat, true)
+    const held = holders.filter((k) => k.at.length > 0)
+    const places = held.length ? passageStarts(flat, c, true) : []
+    if (!places.length) continue
+    // reach[p]: how far the kept passages that start at or before p run.
+    // blocked[p]: how many of them have no occurrence clear of the words at p.
+    const reach = new Int32Array(flat.length + 1)
+    const blocked = new Int32Array(flat.length + 1)
+    const blocks = (k) => [Math.max(0, k.at[k.at.length - 1] - c.length + 1), k.at[0] + k.flat.length]
+    for (const k of held) {
+      for (const at of k.at) reach[at] = Math.max(reach[at], at + k.flat.length)
+      const [from, to] = blocks(k)
+      if (from < to) {
+        blocked[from]++
+        blocked[to]--
+      }
+    }
+    for (let i = 1; i <= flat.length; i++) {
+      reach[i] = Math.max(reach[i], reach[i - 1])
+      blocked[i] += blocked[i - 1]
+    }
+    const clear = places.filter((p) => blocked[p] === 0)
+    if (clear.some((p) => reach[p] < p + c.length)) found.free = true
+    else if (clear.length) found.repeated = true
+    else {
+      const cheapest = places.reduce((best, p) => (blocked[p] < blocked[best] ? p : best))
+      for (const k of held) {
+        const [from, to] = blocks(k)
+        if (from <= cheapest && cheapest < to && !found.stuck.includes(k.text)) found.stuck.push(k.text)
+      }
+    }
+  }
+  return found
+}
+
 /**
  * @param examples  Earlier library rewrites similar to this prompt, as
  *                  `[{ before, after }]`; see store.similar(). Omitted or empty
  *                  when few-shot is off or nothing in the library is close.
  * @param retry     Set on the second attempt after validateRewrite() rejected
  *                  the first: `{ previous, reasons }`.
+ * @param feedback  Set on a "fix again": the rewrite the user marked up and the
+ *                  passages they marked, `{ previous, keep, change }`. Without
+ *                  it the message is exactly what it was before marks existed.
  *
  * Layout matters for small models: every instruction lives in one block at the
  * top and the text to edit sits alone at the end, so "keep the user's text"
  * cannot be read as "keep all of this text".
  */
-export function buildUserPrompt({ prompt, analysis, options = {}, examples = [], retry }) {
+export function buildUserPrompt({ prompt, analysis, options = {}, examples = [], retry, feedback }) {
   const strength = STRENGTHS.some((s) => s.id === options.strength) ? options.strength : 'balanced'
+  const marks = usableFeedback(feedback)
+  const nested = marks ? nestedMarks(marks) : { free: false, repeated: false }
   const instructions = []
 
   if (STRENGTH_DIRECTIVES[strength]) instructions.push(STRENGTH_DIRECTIVES[strength])
@@ -560,6 +842,42 @@ ${String(options.notes).trim()}
 </user_notes>`)
   }
 
+  if (marks) {
+    // Only the rules that have a passage to apply to: a small model handed a
+    // rule about <change> tags it cannot find goes looking for something to change.
+    const rules = [
+      'The user reviewed your previous rewrite and marked parts of it.',
+      'Start from the text inside <previous_rewrite>, not from scratch.',
+      marks.keep.length && 'Every passage inside a <keep> tag must appear in fixedPrompt word for word.',
+      marks.change.length &&
+        'Every passage inside a <change> tag must not survive as it is: reword it, replace it or remove it, whichever serves the prompt best.',
+      // Without this the two rules above contradict each other, and the model
+      // breaks whichever it read last. Said only when it applies, like the rest.
+      nested.free &&
+        'Where the words of a <change> passage also stand inside a <keep> passage, the <keep> passage wins: leave them as they are inside it, and change them where they stand on their own.',
+      // Where they never stand on their own, that sentence asks for nothing and
+      // the guard still wants one occurrence fewer: say what it will accept.
+      nested.repeated &&
+        'Where the words of a <change> passage stand nowhere but inside a <keep> passage that occurs more than once in <previous_rewrite>, the user marked two places that read the same: leave one occurrence of that <keep> passage exactly as it is, and change the words in another occurrence of it.',
+      'Leave the unmarked text as it is unless a change forces an adjustment.',
+    ].filter(Boolean)
+    const passages = [
+      ...marks.keep.map((p) => `<keep>${p.replace(PASSAGE_TAGS, '&lt;')}</keep>`),
+      ...marks.change.map((p) => `<change>${p.replace(PASSAGE_TAGS, '&lt;')}</change>`),
+    ]
+    // The rules are one line on purpose: the scrub works line by line, and the
+    // first sentence is the marker that takes the whole paragraph with it.
+    instructions.push(`${rules.join(' ')}
+
+<previous_rewrite>
+${marks.previous.replace(WRAPPER_TAGS, '&lt;')}
+</previous_rewrite>
+
+<user_feedback>
+${passages.join('\n')}
+</user_feedback>`)
+  }
+
   if (retry) {
     // The redo instruction has to match the reason. "Change as little as
     // possible" is the light-touch contract; handed to a full rebuild whose
@@ -567,11 +885,28 @@ ${String(options.notes).trim()}
     const reasons = retry.reasons || []
     const lowRetention = reasons.some((r) => /words survived/.test(r))
     const grew = reasons.some((r) => /scaffolding/.test(r))
-    const redo = lowRetention
-      ? "Do it again: start from the user's own sentences, change as little as possible,"
-      : grew
-        ? "Do it again: keep the user's text and drop the added sections, roles and rules — a rewrite at this strength stays close to the original's length,"
-        : 'Do it again at the same strength,'
+    // A fix-again is redone from the previous rewrite whatever went wrong:
+    // "start from the user's own sentences" would send it back to the wrong
+    // text. Decided before the reasons are read, too — on a fix-again they
+    // quote the user's passages, which may say anything, "scaffolding" included.
+    const demands = [
+      marks?.keep.length && 'copy every <keep> passage into it exactly as it is written',
+      // What the guard counts, in the words of the rule the model was given:
+      // "outside the <keep> passages" is nowhere when the words only stand inside them.
+      marks?.change.length &&
+        (nested.repeated
+          ? 'make sure every <change> passage occurs fewer times than it does in <previous_rewrite>, changing it inside one occurrence of a repeated <keep> passage where it stands nowhere else'
+          : nested.free
+            ? 'make sure no <change> passage survives as it was outside the <keep> passages'
+            : 'make sure no <change> passage survives as it was'),
+    ].filter(Boolean)
+    const redo = marks
+      ? `Do it again: start from the text inside <previous_rewrite>, ${demands.join(', ')},`
+      : lowRetention
+        ? "Do it again: start from the user's own sentences, change as little as possible,"
+        : grew
+          ? "Do it again: keep the user's text and drop the added sections, roles and rules — a rewrite at this strength stays close to the original's length,"
+          : 'Do it again at the same strength,'
     instructions.push(`Your previous attempt was rejected: ${reasons.join('; ')}. ${redo} and put nothing in fixedPrompt except the improved prompt itself.
 
 <rejected_attempt>
@@ -580,7 +915,7 @@ ${retry.previous}
   }
 
   return [
-    'You will fix one prompt. Everything inside <instructions> is guidance for you. The text to fix is only what sits inside <original_prompt> at the end — nothing from <instructions> may appear in fixedPrompt.',
+    marks ? OPENING_WITH_FEEDBACK : OPENING,
     '',
     '<instructions>',
     instructions.join('\n\n'),

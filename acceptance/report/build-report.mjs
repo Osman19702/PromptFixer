@@ -29,7 +29,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 const byId = new Map()
 for (const r of results) {
-  const m = r.name.match(/^([A-L]\d+) — /)
+  const m = r.name.match(/^([A-N]\d+) — /)
   if (m) byId.set(m[1], r)
 }
 

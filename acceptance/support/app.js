@@ -21,13 +21,20 @@ const SERVER = path.join(__dirname, '..', '..', 'server', 'index.js')
 export const CANARY_KEY = 'canary-compatible-key-7f3a'
 
 /**
+ * How a server started here can be told from one somebody is using: its model
+ * folder. The visual check empties the library before every picture, and only
+ * ever does that to a server with this in its model folder's name.
+ */
+export const MODEL_DIR_PREFIX = 'promptfixer-acc-models-'
+
+/**
  * @param stub   The stub provider from stub-provider.js, or omitted for a
  *               server with no provider configured at all.
  * @param env    Overrides for the server's environment.
  */
 export async function startApp({ stub, env = {} } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfixer-acc-data-'))
-  const modelDir = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfixer-acc-models-'))
+  const modelDir = fs.mkdtempSync(path.join(os.tmpdir(), MODEL_DIR_PREFIX))
 
   const childEnv = {
     ...process.env,
@@ -61,6 +68,22 @@ export async function startApp({ stub, env = {} } = {}) {
 
   let child
   let base = ''
+
+  /** The child gone, then both folders: what stop() does, and what a start that failed owes its caller. */
+  const cleanUp = async () => {
+    // A spawn that failed has no pid and never emits "exit"; neither does a child that is already gone.
+    if (child?.pid && child.exitCode === null && child.signalCode === null) {
+      await new Promise((resolve) => {
+        child.once('exit', resolve)
+        child.kill()
+      })
+    }
+    for (const dir of [dataDir, modelDir]) {
+      // Windows can still hold a just-killed child's files open for a moment.
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  }
+
   await new Promise((resolve, reject) => {
     let stdout = ''
     let stderr = ''
@@ -87,6 +110,12 @@ export async function startApp({ stub, env = {} } = {}) {
       clearTimeout(timer)
       reject(new Error(`server exited with code ${code} before it was ready.\n${stderr.slice(0, 600)}`))
     })
+  }).catch(async (err) => {
+    // The caller is never handed a stop() for a server that did not start, and
+    // after the timeout that server is still running: nothing may outlive the
+    // rejection. Whatever the tidying runs into, the start's error is the one to report.
+    await cleanUp().catch(() => {})
+    throw err
   })
 
   /** Raw fetch with the canary check; use when you need headers or a custom origin. */
@@ -129,17 +158,6 @@ export async function startApp({ stub, env = {} } = {}) {
     analyze: (prompt, options = {}) => req('POST', '/api/analyze', { prompt, options }),
     /** Empty the library between scenarios. */
     clearLibrary: () => req('DELETE', '/api/library/all'),
-    async stop() {
-      if (child && child.exitCode === null) {
-        await new Promise((resolve) => {
-          child.once('exit', resolve)
-          child.kill()
-        })
-      }
-      for (const dir of [dataDir, modelDir]) {
-        // Windows can still hold a just-killed child's files open for a moment.
-        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-      }
-    },
+    stop: cleanUp,
   }
 }

@@ -7,6 +7,7 @@
 import type {
   Analysis,
   ExamplePrompt,
+  FixFeedback,
   FixOptions,
   FixResult,
   ImportResult,
@@ -19,6 +20,7 @@ const HEADLINES: Record<WarningKind, string> = {
   leak: 'The model copied its instructions into the rewrite',
   retention: 'Rewrote more than the strength allows',
   growth: 'Added more than the strength allows',
+  feedback: 'Did not follow all of your marks',
 }
 
 /** The server tags the kind; older responses only carry the sentence, so infer it. */
@@ -259,4 +261,209 @@ export function importSummary(r: ImportResult): string {
 export function learnedNote(meta: { examplesUsed?: number }): string {
   const n = meta.examplesUsed ?? 0
   return n > 0 ? ` · learned from ${plural(n, 'saved example')}` : ''
+}
+
+// --- marks on the rewrite ---------------------------------------------------------------
+
+export type MarkKind = 'keep' | 'change'
+
+/** A highlighted range of the rewrite: character offsets into fixedPrompt, `end` exclusive. */
+export interface Mark {
+  start: number
+  end: number
+  kind: MarkKind
+}
+
+/**
+ * The server reads at most this many passages of a kind (MAX_MARKS in
+ * server/index.js) and silently drops the rest. The bar stops at the same
+ * number, so its count never promises the model more than it is shown.
+ */
+export const MAX_MARKS = 20
+
+/** One shared empty list, so "no marks" never looks like a change to a memo or an effect. */
+export const NO_MARKS: Mark[] = []
+
+/**
+ * The one place that decides what marking a range does: the new list, or why
+ * there is none. addMark acts on it and markRefusedAtCap explains it, so the
+ * button can never refuse a press the reducer would take, nor offer one it drops.
+ */
+function placeMark(marks: Mark[], mark: Mark, text: string): Mark[] | 'blank' | 'full' {
+  let start = Math.max(0, Math.min(mark.start, mark.end))
+  let end = Math.min(text.length, Math.max(mark.start, mark.end))
+  while (start < end && /\s/.test(text[start])) start++
+  while (end > start && /\s/.test(text[end - 1])) end--
+  // Written this way round so a NaN offset is ignored too.
+  if (!(start < end)) return 'blank'
+  const untouched = marks.filter((m) => m.end <= start || m.start >= end)
+  // Counted after the overlaps are gone: redrawing one of twenty marks is still twenty.
+  if (untouched.filter((m) => m.kind === mark.kind).length >= MAX_MARKS) return 'full'
+  return [...untouched, { start, end, kind: mark.kind }].sort((a, b) => a.start - b.start)
+}
+
+/**
+ * Mark a selected range. It is clamped to the text and loses the whitespace at
+ * both ends (a double-click drags the trailing space along); if nothing is left
+ * the same array comes back, so React skips the render. Every mark the new one
+ * touches is dropped: the newest decision wins. A mark that would take its kind
+ * past MAX_MARKS is refused the same way.
+ */
+export function addMark(marks: Mark[], mark: Mark, text: string): Mark[] {
+  const placed = placeMark(marks, mark, text)
+  return typeof placed === 'string' ? marks : placed
+}
+
+/** Whether `kind` already holds all the marks the server will read. */
+export function markCapReached(marks: Mark[], kind: MarkKind): boolean {
+  return markCounts(marks)[kind] >= MAX_MARKS
+}
+
+/**
+ * Whether addMark would refuse this range because its kind is full. A full kind
+ * still takes a range that replaces or merges marks of its own, and a range of
+ * nothing but whitespace is not refused for the cap: removing a mark would not
+ * make it markable, so the cap's tooltip would be a lie there.
+ */
+export function markRefusedAtCap(marks: Mark[], mark: Mark, text: string): boolean {
+  return placeMark(marks, mark, text) === 'full'
+}
+
+/**
+ * What a marking button shows for the live selection (null: none in the
+ * rewrite). With nothing selected a full kind still says why in its tooltip.
+ */
+export function markButton(
+  marks: Mark[],
+  selection: { start: number; end: number } | null,
+  kind: MarkKind,
+  text: string
+): { disabled: boolean; title: string | undefined } {
+  const full = selection ? markRefusedAtCap(marks, { ...selection, kind }, text) : markCapReached(marks, kind)
+  return { disabled: !selection || full, title: full ? markCapTitle(kind) : undefined }
+}
+
+/** The tooltip of a marking button that is disabled because its kind is full. */
+export function markCapTitle(kind: MarkKind): string {
+  const what = kind === 'keep' ? 'kept' : 'to change'
+  return `${MAX_MARKS} passages ${what} is the most the model is shown. Remove one to mark another.`
+}
+
+export function removeMark(marks: Mark[], index: number): Mark[] {
+  return index >= 0 && index < marks.length ? marks.filter((_, i) => i !== index) : marks
+}
+
+export interface MarkSegment {
+  text: string
+  /** null for the plain text between marks. */
+  kind: MarkKind | null
+  /** Position in `marks`, or -1 for plain text. */
+  index: number
+}
+
+/**
+ * The rewrite cut into plain and marked runs, in order. The runs always join
+ * back to exactly `text`: `pre.output` has to hold the prompt character for
+ * character, so a mark that does not fit (made for another text, or overlapping
+ * an earlier one) is left out rather than allowed to bend the text.
+ */
+export function markSegments(text: string, marks: Mark[]): MarkSegment[] {
+  const out: MarkSegment[] = []
+  let at = 0
+  const ordered = marks.map((m, index) => ({ ...m, index })).sort((a, b) => a.start - b.start)
+  for (const m of ordered) {
+    if (!(m.start < m.end) || m.start < at || m.end > text.length) continue
+    if (m.start > at) out.push({ text: text.slice(at, m.start), kind: null, index: -1 })
+    out.push({ text: text.slice(m.start, m.end), kind: m.kind, index: m.index })
+    at = m.end
+  }
+  if (at < text.length) out.push({ text: text.slice(at), kind: null, index: -1 })
+  return out
+}
+
+export function markCounts(marks: Mark[]): { keep: number; change: number } {
+  const keep = marks.filter((m) => m.kind === 'keep').length
+  return { keep, change: marks.length - keep }
+}
+
+/**
+ * What a screen reader hears on a highlight: the verdict, the passage, and that
+ * activating it removes it. The passage is never clipped: an aria-label replaces
+ * the element's content, so whatever is cut here is text of the rewrite that
+ * assistive technology can no longer reach.
+ */
+export function markLabel(kind: MarkKind, passage: string): string {
+  const what = kind === 'keep' ? 'Marked to keep' : 'Marked to change'
+  return `${what}: “${passage.replace(/\s+/g, ' ').trim()}”. Activate to remove this mark.`
+}
+
+/** The marks the user made, and the one rewrite they were made on. */
+export interface MarkedResult {
+  result: FixResult
+  marks: Mark[]
+}
+
+/**
+ * The marks to paint and to refine with: only ever those made on the rewrite
+ * being shown. While their result waits behind "Show last fix" nothing is
+ * shown, so there is nothing to mark or to fix again with either.
+ */
+export function shownMarks(marked: MarkedResult | null, active: FixResult | null): Mark[] {
+  return marked && marked.result === active ? marked.marks : NO_MARKS
+}
+
+/**
+ * What is left of the marks once `selected` is the history's selected result.
+ * They die with any change of selection: a new fix or refine, a history step,
+ * or Apply, Clear, an example or a library load parking it (null). A result
+ * that is merely hidden because the editor moved on is still selected, so one
+ * keystroke in the editor does not cost the user their marks. The same object
+ * comes back when nothing dies, so React skips the render.
+ */
+export function marksAfterSelect(marked: MarkedResult | null, selected: FixResult | null): MarkedResult | null {
+  return marked && marked.result === selected ? marked : null
+}
+
+/**
+ * Ctrl+Enter is the app-wide "fix from scratch" shortcut, and a fresh fix
+ * throws the marks away, so the marking UI keeps the key to itself, but only
+ * while there are marks to lose. With none it has to reach the app-wide handler,
+ * as it did before the rewrite could take focus.
+ */
+export function holdsFixShortcut(e: { key: string; ctrlKey: boolean; metaKey: boolean }, marks: Mark[]): boolean {
+  return marks.length > 0 && (e.ctrlKey || e.metaKey) && e.key === 'Enter'
+}
+
+/**
+ * The `feedback` field of POST /api/fix, or null when there is nothing to send.
+ * The same words marked twice are one passage to the model.
+ */
+export function feedbackPayload(text: string, marks: Mark[]): FixFeedback | null {
+  const passages = (kind: MarkKind) => [
+    ...new Set(marks.filter((m) => m.kind === kind).map((m) => text.slice(m.start, m.end)).filter(Boolean)),
+  ]
+  const keep = passages('keep')
+  const change = passages('change')
+  return keep.length || change.length ? { previous: text, keep, change } : null
+}
+
+/**
+ * Gate for "Fix again with my marks". Same rules as canFix, but `g.prompt` is
+ * the marked result's original: a refine is measured against that, whatever
+ * the editor holds by now.
+ */
+export function canRefine(g: FixGate, marks: Mark[]): boolean {
+  return marks.length > 0 && canFix(g)
+}
+
+/**
+ * Suffix for the "What changed" line after a refine. It counts the marks the
+ * rewrite actually honoured, so it never claims more than the warning admits.
+ */
+export function refinedNote(meta: { feedback?: FixResult['meta']['feedback'] }): string {
+  const f = meta.feedback
+  if (!f) return ''
+  const kept = Math.max(0, f.keep - (f.missingKeep?.length ?? 0))
+  const changed = Math.max(0, f.change - (f.unchangedChange?.length ?? 0))
+  return ` · refined with your marks (${kept} kept, ${changed} changed)`
 }

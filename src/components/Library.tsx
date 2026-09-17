@@ -106,7 +106,7 @@ export function Library({ onClose, onLoad, refreshKey, onError, onNotice }: Prop
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-label="Prompt library">
+      <aside className="drawer" data-testid="library-drawer" role="dialog" aria-label="Prompt library">
         <div className="pane-head">
           <span className="pane-title">Library</span>
           <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
@@ -193,7 +193,9 @@ export function Library({ onClose, onLoad, refreshKey, onError, onNotice }: Prop
                       </span>
                     )}
                     {entry.model && <span className="chip">{entry.model}</span>}
-                    <span>{new Date(entry.updatedAt).toLocaleDateString()}</span>
+                    <span data-testid="library-entry-date">
+                      {new Date(entry.updatedAt).toLocaleDateString()}
+                    </span>
                     <div className="topbar-spacer" />
                     <button
                       className="btn ghost sm"

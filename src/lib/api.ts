@@ -2,6 +2,7 @@ import type {
   Analysis,
   AppConfig,
   ExamplePrompt,
+  FixFeedback,
   FixOptions,
   FixResult,
   ImportResult,
@@ -9,6 +10,16 @@ import type {
   LibraryExport,
   LocalStatus,
 } from '../types'
+
+export interface FixPayload {
+  /** Always the user's original prompt, also when refining an earlier rewrite. */
+  prompt: string
+  provider: string
+  model: string
+  options: FixOptions
+  /** Marks on an earlier rewrite; without it this is an ordinary fix. */
+  feedback?: FixFeedback
+}
 
 export class ApiError extends Error {
   status: number
@@ -61,10 +72,7 @@ export const api = {
       signal,
     }),
 
-  fix: (
-    payload: { prompt: string; provider: string; model: string; options: FixOptions },
-    signal?: AbortSignal
-  ) =>
+  fix: (payload: FixPayload, signal?: AbortSignal) =>
     call<FixResult>('/fix', {
       method: 'POST',
       body: JSON.stringify(payload),

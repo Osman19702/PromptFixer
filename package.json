@@ -1,7 +1,7 @@
 {
   "name": "promptfixer",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Lint, score and rewrite LLM prompts. Desktop app with a built-in local model; cloud providers optional.",
   "author": "Osman Turalioglu",
@@ -31,11 +31,14 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux",
     "release:checksums": "node scripts/release-checksums.js",
+    "check:release": "node scripts/check-release.mjs",
     "lint:prompts": "node scripts/lint-prompts.js",
     "test:acceptance": "node --test acceptance/*.acceptance.test.js",
     "test:trace": "node acceptance/trace.js",
     "test:all": "npm test && npm run test:acceptance && npm run test:trace",
-    "test:report": "node acceptance/report/run.mjs"
+    "test:report": "node acceptance/report/run.mjs",
+    "visual": "node scripts/visual.mjs",
+    "visual:approve": "node scripts/visual.mjs --update"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -48,6 +51,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
+    "elastishot": "^0.1.7",
     "electron": "^44.1.1",
     "electron-builder": "^26.15.3",
     "playwright": "^1.63.0",

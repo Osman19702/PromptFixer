@@ -105,3 +105,89 @@ export const libraryEntry = (over = {}) => ({
   model: 'stub-large',
   ...over,
 })
+
+// --- marks on a rewrite ("fix again") ----------------------------------------------
+
+/** A sentence of FIX_RESPONSE's rewrite the user loved, and one they did not. */
+export const LOVED = 'Write one blog post announcing our new feature.'
+export const DISLIKED = 'You are a senior content strategist.'
+
+/** What a model that follows the marks puts where a disliked passage was. */
+export const REWORDED = 'You write for the blog of a small software company.'
+
+/**
+ * Marks travel as text, and the same words can stand in two places. TWICE is
+ * two words of LOVED; this rewrite uses them once more, on their own, in a
+ * closing line — so a user can love the sentence and dislike them down there.
+ */
+export const TWICE = 'new feature'
+export const TWICE_REWORDED = 'release'
+export const TWICE_REWRITE = `${FIX_RESPONSE.fixedPrompt}\n\n## Closing\nInvite readers to try the new feature.`
+
+/**
+ * A rewrite with a slot for the prompt's own user to fill, under the very tag
+ * a fix-again wraps the marks in. On an ordinary fix that is nobody's
+ * instructions pasted back; it is part of the prompt.
+ */
+export const SLOT = '<user_feedback>[paste the customer feedback the post may quote]</user_feedback>'
+export const SLOT_REWRITE = `${FIX_RESPONSE.fixedPrompt}\n\n## Source material\n${SLOT}`
+
+/** A rewrite far longer than the window, a requirement to a line, so the results pane scrolls; and a prompt it keeps enough of. */
+const lines = (wording) => Array.from({ length: 120 }, (_, i) => `Line ${i + 1}: describe requirement number ${i + 1} ${wording}.`).join('\n')
+export const LONG_PROMPT = lines('in plain words')
+export const LONG_REWRITE = lines('in plain, exact words')
+
+// A queued reply is called for every request; one that is not a fix-again has no marks to read.
+const marksShown = (r) => r.feedback || { previous: FIX_RESPONSE.fixedPrompt, keep: [], change: [] }
+
+/**
+ * Follows the marks: starts from the marked rewrite, rewords what was disliked,
+ * leaves the rest alone. A kept passage is lifted out first, where it last
+ * stands, and put back after: the words of a passage to change may stand inside
+ * it too, and there a model that follows the marks leaves them be.
+ */
+export const honoursMarks = (r) => {
+  const { previous, keep, change } = marksShown(r)
+  const slot = (i) => `⟦kept ${i}⟧`
+  const lifted = keep.reduce((text, passage, i) => {
+    const at = text.lastIndexOf(passage)
+    return at < 0 ? text : text.slice(0, at) + slot(i) + text.slice(at + passage.length)
+  }, previous)
+  const reworded = change.reduce((text, passage) => text.split(passage).join(passage === TWICE ? TWICE_REWORDED : REWORDED), lifted)
+  return {
+    ...FIX_RESPONSE,
+    fixedPrompt: keep.reduce((text, passage, i) => text.split(slot(i)).join(passage), reworded),
+    summary: 'Reworded what you marked for change and left the rest alone.',
+    changes: [{ type: 'clarity', what: 'Reworded the marked passages', why: 'You marked them for change.' }],
+  }
+}
+
+/**
+ * Ignores the marks: a kept passage comes back paraphrased and a disliked one
+ * as it was. The paraphrase keeps every word, so the strength guard has
+ * nothing to object to and the marks are the only thing wrong.
+ */
+export const ignoresMarks = (r) => {
+  const { previous, keep } = marksShown(r)
+  return {
+    ...FIX_RESPONSE,
+    fixedPrompt: keep.reduce((text, passage) => text.split(passage).join(passage.replace(/^(\S+)\s+/, '$1, please, ')), previous),
+    summary: 'Tidied the wording.',
+  }
+}
+
+// --- the look of the interface (the visual check) -----------------------------------
+
+/** The line of FIX_RESPONSE's rewrite that a later model words differently, and its new wording. */
+export const LENGTH_LINE = '- At most 600 words'
+export const LENGTH_LINE_REVISED = '- Between 400 and 600 words, the title included'
+
+/**
+ * The default rewrite with that one line changed and everything else as it
+ * was: the same sections, the same scores, the same list of changes — so the
+ * rewrite on the Fixed tab is the only thing on any screen that looks different.
+ */
+export const REVISED_FIX_RESPONSE = {
+  ...FIX_RESPONSE,
+  fixedPrompt: FIX_RESPONSE.fixedPrompt.replace(LENGTH_LINE, LENGTH_LINE_REVISED),
+}

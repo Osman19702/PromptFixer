@@ -16,6 +16,12 @@
   --bad: #f2616b;
   --add: #3ecf8e;
   --del: #f2616b;
+  /* Added/removed in the Diff tab and keep/change marks on the Fixed tab share
+     these, so the two views agree. Text on them is 9.7:1 or better over --bg. */
+  --add-bg: rgba(62, 207, 142, 0.16);
+  --add-text: #a8f0cd;
+  --del-bg: rgba(242, 97, 107, 0.14);
+  --del-text: #ffb3b8;
   --radius: 10px;
   --radius-sm: 7px;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
@@ -563,16 +569,16 @@ select:disabled {
   word-break: break-word;
 }
 .diff ins {
-  background: rgba(62, 207, 142, 0.16);
-  color: #a8f0cd;
+  background: var(--add-bg);
+  color: var(--add-text);
   text-decoration: none;
   border-radius: 3px;
   padding: 1px 0;
   box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.2);
 }
 .diff del {
-  background: rgba(242, 97, 107, 0.14);
-  color: #ffb3b8;
+  background: var(--del-bg);
+  color: var(--del-text);
   text-decoration: line-through;
   text-decoration-color: rgba(242, 97, 107, 0.55);
   border-radius: 3px;
@@ -1152,4 +1158,114 @@ select:disabled {
   white-space: nowrap;
   min-width: 42px;
   text-align: center;
+}
+
+/* --- marks on the rewrite ------------------------------------------------ */
+.feedback-bar {
+  /* A long rewrite scrolls underneath; the buttons stay next to the selection.
+     While a selection is being dragged MarkableOutput sets pointer-events: none
+     on it, so a drag that runs up onto the bar keeps selecting the rewrite. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 7px 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  /* Sticky stops at the pane's content edge, 16px of padding below the pane
+     head. This fills that strip with the page colour, or the rewrite would show
+     through it as it scrolls past. Unstuck, it lies on the empty margin above. */
+  box-shadow: 0 -12px 0 4px var(--bg);
+}
+.feedback-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feedback-marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-left: auto;
+}
+.feedback-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Not .keep/.change: a bare .change is a row of the Changes tab. */
+.feedback-count .n-keep {
+  color: var(--add-text);
+}
+.feedback-count .n-change {
+  color: var(--del-text);
+}
+.mark-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.mark-swatch.for-keep {
+  background: rgba(62, 207, 142, 0.5);
+}
+.mark-swatch.for-change {
+  background: rgba(242, 97, 107, 0.5);
+}
+
+/* Scoped to the output, and the box is spelled out: .brand .mark is the logo,
+   and .change (a grid row with padding and a rule under it) would otherwise
+   turn a highlight into a block and put line breaks into the pre's innerText. */
+.output .mark {
+  display: inline;
+  padding: 1px 0;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  /* A highlight that wraps keeps its shape on every line. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background 0.14s;
+}
+/* Ring for keep, wavy underline for change: the two never differ by colour alone. */
+.output .mark.keep {
+  background: var(--add-bg);
+  color: var(--add-text);
+  box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.2);
+}
+.output .mark.change {
+  background: var(--del-bg);
+  color: var(--del-text);
+  text-decoration: underline wavy rgba(242, 97, 107, 0.55);
+  text-underline-offset: 3px;
+}
+.output .mark.keep:hover {
+  background: rgba(62, 207, 142, 0.3);
+}
+.output .mark.change:hover {
+  background: rgba(242, 97, 107, 0.28);
+}
+.output .mark:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The pre takes focus only as a stand-in: for the length of a press on a mark,
+   and when the control that held the focus goes away (the last mark removed by
+   keyboard, Clear marks, Fix again). Never by Tab, so it shows no ring. */
+.output:focus {
+  outline: none;
+}
+
+@media (max-width: 900px) {
+  /* The pane head is the sticky element down here; two would stack over the text. */
+  .feedback-bar {
+    position: static;
+    box-shadow: none;
+  }
 }

@@ -45,7 +45,21 @@ export interface FixOptions {
   fewShot: boolean
 }
 
-export type WarningKind = 'leak' | 'retention' | 'growth'
+export type WarningKind = 'leak' | 'retention' | 'growth' | 'feedback'
+
+/**
+ * The user's marks on an earlier rewrite, sent with POST /api/fix to refine it.
+ * `prompt` stays the original, so scores, diff and the guard still measure
+ * against what the user wrote.
+ */
+export interface FixFeedback {
+  /** The rewrite that was marked up (an earlier fixedPrompt). */
+  previous: string
+  /** Passages of `previous` that must come back word for word. */
+  keep: string[]
+  /** Passages of `previous` that must not survive as they are. */
+  change: string[]
+}
 
 export interface FixResult {
   original: string
@@ -73,6 +87,16 @@ export interface FixResult {
     warningKind?: WarningKind
     /** How many library entries were shown to the model as examples (0 when fewShot is off). */
     examplesUsed: number
+    /** Present only when the request carried marks that survived the server's sanitising. */
+    feedback?: {
+      /** How many passages of each kind were sent to the model. */
+      keep: number
+      change: number
+      /** Kept passages that are not in fixedPrompt after all. */
+      missingKeep: string[]
+      /** Passages to change that are still in fixedPrompt verbatim. */
+      unchangedChange: string[]
+    }
   }
 }
 

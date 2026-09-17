@@ -44,7 +44,7 @@ export function DiffView({ before, after }: { before: string; after: string }) {
         </div>
       )}
 
-      <div className={`diff ${showRemoved ? '' : 'hide-removed'}`}>
+      <div className={`diff ${showRemoved ? '' : 'hide-removed'}`} data-testid="diff">
         {tokens.map((token, i) => {
           if (token.type === 'add') return <ins key={i}>{token.value}</ins>
           if (token.type === 'del') return <del key={i}>{token.value}</del>

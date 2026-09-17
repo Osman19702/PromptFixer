@@ -39,7 +39,7 @@ export function readScenarios() {
         mode = 'background'
         continue
       }
-      const m = t.match(/^Scenario(?: Outline)?:\s*([A-L]\d+) — (.+)$/)
+      const m = t.match(/^Scenario(?: Outline)?:\s*([A-N]\d+) — (.+)$/)
       if (m) {
         current = { file, feature, story: story.join(' '), background: [...background], id: m[1], title: m[2], tags: [...featureTags, ...pendingTags], steps: [] }
         scenarios.push(current)

@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DiffView } from './components/DiffView'
 import { IssueList } from './components/IssueList'
 import { Library } from './components/Library'
+import { MarkableOutput } from './components/MarkableOutput'
 import { Delta, ScorePanel } from './components/ScorePanel'
 import { api, ApiError } from './lib/api'
+import type { FixPayload } from './lib/api'
 import {
   applyExample,
   canFix as fixAllowed,
+  canRefine as refineAllowed,
   EMPTY_HISTORY,
+  feedbackPayload,
   historyCurrent,
   historyDeselect,
   historyNav,
@@ -16,12 +20,15 @@ import {
   learnedNote,
   localIdle,
   localTierAction,
+  marksAfterSelect,
   readExamples,
+  refinedNote,
   resultView,
+  shownMarks,
   undoAvailable,
   warningHeadline,
 } from './lib/ui'
-import type { UndoApply } from './lib/ui'
+import type { MarkedResult, UndoApply } from './lib/ui'
 import type { Analysis, AppConfig, ExamplePrompt, FixOptions, LibraryEntry, LocalStatus } from './types'
 
 const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1)
@@ -84,6 +91,8 @@ export default function App() {
 
   const [tab, setTab] = useState<Tab>('issues')
   const [fixing, setFixing] = useState(false)
+  // True while the fix in flight is "Fix again with my marks", so its button shows the spinner.
+  const [refining, setRefining] = useState(false)
   // Set by Cancel on the local provider and cleared once /api/local/status says
   // the server is idle, so a new Fix cannot queue behind the abandoned run.
   const [cancelling, setCancelling] = useState(false)
@@ -97,6 +106,7 @@ export default function App() {
 
   const fixAbort = useRef<AbortController | null>(null)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const errorRef = useRef<HTMLDivElement | null>(null)
 
   const toast = useCallback((message: string, kind = 'info') => {
     const id = Date.now() + Math.random()
@@ -268,34 +278,83 @@ export default function App() {
     setPinned(true)
   }
 
+  // Marks belong to the one rewrite they were made on. Reading them through the
+  // result they were made for means a history step or a new fix never paints
+  // old highlights over different text, not even for a frame; the effect then
+  // drops them for good, so stepping back does not bring them back either.
+  // It follows the history's selection, not view.active: that goes null on the
+  // first keystroke in the editor, and the same rewrite is one Backspace or one
+  // "Show last fix" away, where the user expects their marks to be waiting.
+  const [marked, setMarked] = useState<MarkedResult | null>(null)
+  const marks = shownMarks(marked, view.active)
+  useEffect(() => setMarked((m) => marksAfterSelect(m, result)), [result])
+
   // The button and the keyboard shortcut share this gate.
   const canFix = fixAllowed({ prompt, model, provider, fixing, cancelling, localStatus })
+  // A refine is measured against the marked result's original, not the editor.
+  const canRefine = refineAllowed(
+    { prompt: view.active?.original ?? '', model, provider, fixing, cancelling, localStatus },
+    marks
+  )
 
   // --- actions ------------------------------------------------------------
-  const runFix = useCallback(async () => {
-    if (!canFix) return
-    fixAbort.current?.abort()
-    const controller = new AbortController()
-    fixAbort.current = controller
+  // Fix prompt and "Fix again with my marks" are one request with one in-flight
+  // slot, so Cancel, the abort of a superseded run and the error banner behave
+  // the same for both.
+  const sendFix = useCallback(
+    async (payload: FixPayload) => {
+      const refine = !!payload.feedback
+      fixAbort.current?.abort()
+      const controller = new AbortController()
+      fixAbort.current = controller
 
-    setFixing(true)
-    setError(null)
-    try {
-      const res = await api.fix({ prompt, provider, model, options }, controller.signal)
-      setHistory((h) => historyPush(h, res))
-      setAnalysis(res.before)
-      setTab('fixed')
-      setLocalTick((t) => t + 1)
-      toast(`Fixed in ${(res.meta.elapsedMs / 1000).toFixed(1)}s · ${res.before.score} → ${res.after.score}`)
-    } catch (err) {
-      if (controller.signal.aborted) return
-      const message = err instanceof ApiError ? err.message : (err as Error).message
-      setError(message)
-      setTab('issues')
-    } finally {
-      if (!controller.signal.aborted) setFixing(false)
-    }
-  }, [prompt, provider, model, options, canFix, toast])
+      setFixing(true)
+      setRefining(refine)
+      setError(null)
+      try {
+        const res = await api.fix(payload, controller.signal)
+        setHistory((h) => historyPush(h, res))
+        // A refine can start from a pinned or re-shown result while the editor
+        // holds something else; without the pin its own result would hide at once.
+        if (refine) setPinned(true)
+        else setAnalysis(res.before)
+        setTab('fixed')
+        setLocalTick((t) => t + 1)
+        const verb = refine ? 'Refined' : 'Fixed'
+        toast(`${verb} in ${(res.meta.elapsedMs / 1000).toFixed(1)}s · ${res.before.score} → ${res.after.score}`)
+      } catch (err) {
+        if (controller.signal.aborted) return
+        const message = err instanceof ApiError ? err.message : (err as Error).message
+        setError(message)
+        // A failed fix has nothing to show, so Issues leads. A failed refine
+        // still has the marked rewrite: stay on it, marks intact, ready to retry.
+        if (!refine) setTab('issues')
+      } finally {
+        if (!controller.signal.aborted) {
+          setFixing(false)
+          setRefining(false)
+        }
+      }
+    },
+    [toast]
+  )
+
+  const runFix = useCallback(() => {
+    if (canFix) sendFix({ prompt, provider, model, options })
+  }, [prompt, provider, model, options, canFix, sendFix])
+
+  const runRefine = () => {
+    const source = view.active
+    const feedback = source && feedbackPayload(source.fixedPrompt, marks)
+    if (!source || !feedback || !canRefine) return
+    sendFix({ prompt: source.original, provider, model, options, feedback })
+  }
+
+  // The banner sits at the top of the pane; a refine is pressed from wherever
+  // the user scrolled to, and an error they cannot see reads as a dead button.
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [error])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -313,6 +372,7 @@ export default function App() {
   const cancelFix = () => {
     fixAbort.current?.abort()
     setFixing(false)
+    setRefining(false)
     // The server aborts the generation when the request closes; hold the Fix
     // button until status confirms it is idle rather than queue behind it.
     if (provider === 'local') setCancelling(true)
@@ -418,7 +478,7 @@ export default function App() {
 
   const { shown, active } = view
   const exampleRows = (
-    <div className="example-list" aria-label="Example prompts">
+    <div className="example-list" aria-label="Example prompts" data-testid="example-gallery">
       {examples.map((ex) => (
         <button
           className="example-row"
@@ -577,6 +637,7 @@ export default function App() {
             <textarea
               ref={editorRef}
               className="editor"
+              data-testid="editor"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder={
@@ -588,7 +649,7 @@ export default function App() {
           </div>
 
           <div className="pane-foot">
-            <div className="metastrip">
+            <div className="metastrip" data-testid="live-score">
               <span>
                 <b>{analysis?.stats.words ?? 0}</b> words
               </span>
@@ -825,7 +886,7 @@ export default function App() {
 
           <div className="pane-body">
             {error && (
-              <div className="banner error">
+              <div className="banner error" ref={errorRef}>
                 <span>✕</span>
                 <div className="banner-body">
                   <strong>Could not fix the prompt</strong>
@@ -1042,7 +1103,7 @@ export default function App() {
                     </div>
                   )}
                   {active.summary && (
-                    <div className="banner info">
+                    <div className="banner info" data-testid="what-changed">
                       <span>✦</span>
                       <div className="banner-body">
                         <strong>What changed</strong>
@@ -1056,6 +1117,9 @@ export default function App() {
                         {learnedNote(active.meta) && (
                           <span style={{ color: 'var(--text-faint)' }}>{learnedNote(active.meta)}</span>
                         )}
+                        {refinedNote(active.meta) && (
+                          <span style={{ color: 'var(--text-faint)' }}>{refinedNote(active.meta)}</span>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1064,7 +1128,14 @@ export default function App() {
                     categories={config.categories}
                     compareTo={active.before}
                   />
-                  <pre className="output">{active.fixedPrompt}</pre>
+                  <MarkableOutput
+                    text={active.fixedPrompt}
+                    marks={marks}
+                    onMarksChange={(next) => setMarked(next.length ? { result: active, marks: next } : null)}
+                    canRefine={canRefine}
+                    refining={refining}
+                    onRefine={runRefine}
+                  />
                 </>
               ) : view.edited ? null : (
                 <div className="empty">
@@ -1095,7 +1166,7 @@ export default function App() {
                       Changes
                       <Delta before={active.before.score} after={active.after.score} />
                     </div>
-                    <div className="card">
+                    <div className="card" data-testid="changes">
                       {active.changes.length ? (
                         active.changes.map((c, i) => (
                           <div className="change" key={i}>
@@ -1149,7 +1220,7 @@ export default function App() {
 
                   <div className="section">
                     <div className="section-title">Run details</div>
-                    <div className="metastrip">
+                    <div className="metastrip" data-testid="run-details">
                       <span>
                         <b>{active.meta.model}</b>
                       </span>
@@ -1186,7 +1257,7 @@ export default function App() {
         />
       )}
 
-      <div className="toasts">
+      <div className="toasts" data-testid="toasts">
         {toasts.map((t) => (
           <div className={`toast ${t.kind}`} key={t.id}>
             {t.message}

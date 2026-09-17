@@ -1,8 +1,13 @@
 # Acceptance test-driven development for PromptFixer
 
-> **Status (2026-09-09):** the scenarios in Part 3 exist as Gherkin in `acceptance/features/` and
+> **Status (2026-09-17):** the scenarios in Part 3 exist as Gherkin in `acceptance/features/` and
 > as executable tests in `acceptance/*.acceptance.test.js` (`npm run test:acceptance`). The first
-> iteration's results, including the product defects it found, are in `docs/ATDD-REPORT.md`.
+> iteration's results, including the product defects it found, are in `docs/ATDD-REPORT.md`. Two
+> groups have been added since: Group M (marking a rewrite and fixing it again) and Group N (the
+> visual check with Elastishot). That makes 113 scenarios in fourteen groups — 102 automated, 11
+> waiting on the nightly machine, the packaged installer or a person; `npm run test:trace` prints
+> the list. Parts 1 and 2 describe the conversion as it was planned and are kept as written, apart
+> from the counts and the visual seam.
 
 This document converts PromptFixer's development strategy to ATDD. It has three parts: an honest
 read of where the test strategy stands today, the target shape and the way of working that gets us
@@ -58,7 +63,10 @@ definition of done grows a clause.
 The **acceptance tier** is new. It lives in `acceptance/`, one file per capability, and it drives the
 product through the seams a real user touches: the HTTP API for server behaviour, the built React app
 in a real browser for the interface, the packaged Electron app for the desktop story, and the CLI as
-a spawned subprocess for the CI linter. An acceptance test never imports an internal module. If a
+a spawned subprocess for the CI linter. Group N adds a fifth seam, and its user is a developer of
+PromptFixer rather than a user of it: the Elastishot command line and the two npm scripts around it
+(`npm run visual`, `npm run visual:approve`), run as subprocesses against the built app, with the
+report they write as the thing asserted on. An acceptance test never imports an internal module. If a
 scenario needs to reach into `metaprompt.js` to assert something, that scenario is in the wrong tier.
 These are owned by the whole team; the SDET owns the harness underneath them.
 
@@ -75,11 +83,18 @@ quality on a real model, GPU backend selection on real hardware, how the install
 machine that already has an old version — these are time-boxed charters run by a person, with notes,
 not scripts.
 
-The budget matters more than the tiering. Part 3 defines ninety-five scenarios, and they are not all
-equally cheap: the seventy-two that drive the API and the CLI should finish in about two minutes, the
-fourteen browser scenarios add a few more, and the nine desktop and real-model scenarios are nightly
-because they cannot be made fast. The pull-request gate is therefore capped at eight minutes and the
-whole set at around a hundred scenarios. Anything that does not fit pushes down a tier — permutations
+The budget matters more than the tiering. Part 3 defines one hundred and thirteen scenarios, and they
+are not all equally cheap. A hundred and two run on every pull request: the seventy-three that drive
+the API, the CLI and the diff take about a minute between them, the twenty browser scenarios about
+two, and the two that open the desktop window from source about ten seconds; the files run side by
+side, so until Group N arrived the whole gate finished in about eighty seconds. The seven visual
+scenarios are the expensive ones — each starts the Elastishot command line and a browser of its own,
+and the group needs about three and a half minutes — so they now set the length of the gate, at about
+four minutes. The remaining eleven — the real-model scenarios, the packaged desktop app and one
+manual charter — are nightly or done by a person because they cannot be made fast. The pull-request
+gate is therefore capped at eight minutes and the whole set at around a hundred scenarios, a ceiling
+Groups M and N have used up: the next group has to displace something or push it down a tier rather
+than add to the pile. Anything that does not fit pushes down a tier — permutations
 in particular, which belong in the unit tier and never here. An acceptance suite that grows without a
 ceiling becomes slow, then flaky, then ignored, and an ignored suite is worse than no suite because
 it still costs time to maintain.
@@ -157,20 +172,25 @@ scheduled blindly.
 
 ### CI gates
 
-Pull requests run the unit tier, the component tier, and the acceptance tier for the API, the CLI and
-the browser. The nightly run adds the desktop scenarios and the single real-model smoke test on the
-GPU box. Packaging is verified nightly, and never from inside the synced project folder.
+Pull requests run the unit tier, the component tier, and the acceptance tier for the API, the CLI,
+the browser and the visual check — Group N approves its own pictures at the start of the run, so it
+needs no committed baselines and passes on a fresh clone — plus the two desktop scenarios that open
+the window from source (K2 and K3), which need no installer and no model. The nightly run adds the
+desktop scenarios that need the packaged app (K1 and K4) or a loaded model (F10), and the single
+real-model smoke test on the GPU box. Packaging is verified nightly, and never from inside the synced
+project folder.
 
 ---
 
 ## Part 3 — The acceptance test cases
 
-Ninety-five scenarios in twelve groups: twelve on scoring, ten on the fix journey, ten on the
-strength contract, six on learning from the library, seven on the library itself, eleven on the local
-model, six on providers and privacy, fourteen on the interface, three on the diff, six on the CI
-linter, six on the desktop app and four on configuration and limits. Each is written as a narrative
-rather than a table
-because the narrative is what the three of us agreed in the room; the identifiers exist only so that
+One hundred and thirteen scenarios in fourteen groups: twelve on scoring, ten on the fix journey, ten
+on the strength contract, six on learning from the library, seven on the library itself, eleven on
+the local model, six on providers and privacy, fourteen on the interface, three on the diff, six on
+the CI linter, six on the desktop app, four on configuration and limits, eleven on marking a rewrite
+and fixing it again and seven on the interface looking the same from one run to the next. Each is
+written as a narrative rather than a table because the narrative is what the three of us agreed in
+the room; the identifiers exist only so that
 a commit, a bug report or a coverage gap can point at one unambiguously. Every scenario names the
 condition under which it fails, because a scenario that cannot fail is documentation, not a test.
 
@@ -758,6 +778,251 @@ user walks up to the boundary and one step past it, then the boundary case works
 it is refused or trimmed with an explanation. Every number the README states to a user gets a
 scenario, because an advertised limit that is not enforced is a promise the product breaks quietly.
 
+### Group M — Marking a rewrite and fixing it again
+
+**M1 — The model is shown what I marked, and the result says how many marks it was given.** Given a
+rewrite in which the user has marked one passage "Keep it — I loved it" and another "Change it — I
+didn't like it", when they fix again, then the model is shown the rewrite they marked and both
+passages, each under its own verdict; it is still asked to fix the user's original prompt, with the
+findings they were shown the first time; the new rewrite contains the kept passage word for word and
+no longer contains the other as it was; the run details say how many passages of each kind were
+applied and that none was ignored; and the before score is still the score of what the user wrote.
+That last clause is B1's, restated: a refinement measured against the previous rewrite instead of
+the original would make every second attempt look like no improvement at all. And given a rewrite in
+which two words of the kept sentence stand once more on their own, marked for change there, when the
+user fixes again, then the model is shown both marks and is told that inside the kept sentence the
+kept sentence wins, and a rewrite that rewords those words where they stood alone is accepted at the
+first attempt, with no warning. Marks are made on places but travel as text, so "these words are
+still somewhere in the rewrite" says nothing about the place the user pointed at. It fails if the
+marks reach the model as one undifferentiated list, if fixing again quietly changes what the scores
+and the diff are measured against, or if disliking words in one place costs the user the sentence
+they kept in another — or earns a retry and a warning for a rewrite that did as it was told.
+
+**M2 — A rewrite that drops a passage I kept is retried, and the faithful attempt is kept.** Given a
+model that first paraphrases the sentence the user asked it to keep and leaves the one they disliked
+as it was, and then, told so, follows the marks, when the user fixes again, then they receive the
+second attempt with no warning, the run details show two attempts, and the retry was told which
+passage it had dropped and which it had left as it was — each in quotation marks, under its own
+verdict — and was shown the marks again. "Keep this" is the most explicit instruction a user can
+give this tool, so ignoring it is treated exactly like throwing their words away under C2. It fails
+if a paraphrase of a kept passage is accepted as keeping it, if the retry names a passage under the
+wrong verdict, or if it is sent without the marks it is supposed to honour.
+
+**M3 — When the model ignores my marks twice, I still get a result and I am told what was not
+honoured.** Given a model that ignores the marks on both attempts, when the fix completes, then the
+user still receives a rewrite, a warning says in plain numbers how many kept passages are missing
+and how many passages to change are still there, the run details name those passages, and on screen
+the warning carries its own headline while the "refined with your marks" note counts only the marks
+that were actually followed. A passage to change is "still there" when the rewrite holds it as often
+as the marked rewrite did: the words may stand in several places with one of them marked (M1), so
+one occurrence fewer is a change and none at all always is. A note that says "one kept, one changed"
+directly underneath a warning that says neither happened is the kind of contradiction that teaches
+people to ignore both. It fails if the result is withheld, if the warning renders under a blank or
+generic heading, or if the note claims credit for a mark the warning admits was ignored.
+
+**M4 — Nonsense marks are coerced, never a server error.** Given marks that arrive as a string, a
+number, a list, null, or holding things that are not text, when they are sent, then each request
+succeeds as an ordinary fix. Given marks that all point at words which are not in the rewrite, then
+it is likewise an ordinary fix — the model is shown no marks and the result mentions none — because
+a mark has to point at something. Given a passage marked twice, or padded with spaces, among marks
+that point at nothing, then the model is shown it once, trimmed, and nothing else. Given a passage
+marked both to keep and to change whose words stand in only one place in the rewrite — or a kept
+passage that stands nowhere but inside the passage to change — then the change wins, since a
+complaint is the more specific of the two; but given the same words standing in two places and
+marked both ways, then the model is shown both marks, and rewording one of the two places honours
+both. Marks travel as text but are made on places, so a keep is dropped only when it cannot be told
+apart from a change. Given twenty-five passages marked the same way, or one mark 2,500 characters
+long, then the model is shown the first twenty, and the first 2,000 characters, and the result
+counts twenty — the two limits the README states, held to L4's rule that an advertised number is an
+enforced one; the interface stops at the same twenty (M6). And given a marked rewrite longer than a
+prompt may be, then it is refused with a message naming the length and the limit, before any model
+is contacted. It fails if any malformed shape reaches a property read that throws, if a mark that
+matches nothing is passed on to a model that will then go looking for it, if a keep on a different
+place is silently discarded because a change uses the same words, or if either limit is a number
+only the README knows about.
+
+**M5 — A fix without marks is the fix it always was.** Given no marks, when the user fixes a prompt,
+then the model is shown no earlier rewrite and no marks and the result says nothing about them; and
+given they have since fixed again with marks, when they fix the same prompt once more without any,
+then the model is asked exactly what it was asked the first time and the result is the same. And
+given a model whose rewrite holds a `<user_feedback>` slot of its own, for the prompt's user to
+fill, when the user fixes with no marks, then the rewrite comes back with the slot intact, after one
+attempt and with no warning; and when they mark that rewrite and fix again, the slot is still where
+it was, again with no warning. That tag is the one a fix-again wraps the marks in, and a rewrite
+that contains it is our instructions pasted back only if the request carried marks — and not even
+then if it was already in the rewrite the model was told to start from. The feature is an addition
+to the fix journey, not a change to it, and every scenario in Groups B to D depends on that. It
+fails if marks linger between requests, if an unmarked fix is told to start from anything but the
+user's own prompt, or if the machinery of marks makes the guard suspicious of an ordinary rewrite.
+
+**M6 — I mark what I loved and what I did not.** Given a completed fix on the Fixed tab, when
+nothing is selected, then both marking buttons are disabled; when the user selects words outside the
+rewrite, or drags from outside into it, then they stay disabled; when a selection starts in the
+rewrite and runs on into a toast, then they are disabled too, but when it merely ends where a triple
+click leaves it — parked at the start of whatever follows the rewrite, with nothing outside it
+selected — then the line can be marked; when they double-click a word of the rewrite and press "Keep
+it — I loved it", then exactly that word — not the space a double-click drags along — is highlighted
+as kept and the selection is gone; when they drag across a sentence and press "Change it — I didn't
+like it", then that sentence is highlighted differently; and the bar counts one kept and one to
+change and offers "Fix again with my marks". Given a rewrite longer than the window, scrolled until
+the marking bar has stuck above it, when the user drags a selection upwards onto the bar — from
+plain text or from a highlight — then the selection stays inside the rewrite and both buttons can be
+pressed, and the bar takes the mouse again when the press ends, even a press whose end is never
+reported because the window lost the focus. And given twenty kept passages, when another is
+selected, then "Keep it — I loved it" is disabled and says that twenty is the most the model is
+shown, while the other button is not; removing one highlight makes room. This one is driven with a
+real mouse, because the defects it guards against are physical: pressing a button is itself a mouse
+press, and a press that clears the selection leaves the button with nothing to mark; a bar that
+stays put sits exactly where an upward drag ends. The two selections no mouse can be trusted to make
+twice are built in the page instead. It fails if a selection that is not wholly inside the rewrite
+can be marked, if the highlight is not the text the user selected, if a drag that strays onto the
+bar selects the bar or leaves it dead, or if the bar counts a mark the server will never read (M4).
+
+**M7 — A mark can be changed and taken back.** Given a rewrite with two passages kept and one to
+change, when the user drags across a kept passage again and presses the other button, then the newer
+verdict replaces the older one; when they click a highlight, then it is removed and the count
+follows; when they reach a highlight with the keyboard and press Enter, then it is removed too and
+focus moves to a highlight that is left rather than to the top of the page; when they press
+Ctrl+Enter in the rewrite or on the bar while a mark is showing, then no fix is started and the mark
+is still there — the key is "Fix prompt" everywhere else, and a fresh fix throws marks away; when
+they press Clear marks from the keyboard, then every highlight is gone and so is the offer to fix
+again, and focus is on the rewrite, which shows no ring for it, rather than at the top of the page;
+and when they then click in the rewrite and press Ctrl+Enter, then a fresh fix runs, as it does from
+anywhere else. A mark is a decision, and a decision the user cannot revise is one they will be
+afraid to make. It fails if any mark, once made, can only be undone by starting over, if
+re-selecting a highlighted passage removes the highlight instead of selecting it, if a slip on
+Ctrl+Enter costs the user their marks, or if the rewrite swallows the shortcut when there is nothing
+to protect.
+
+**M8 — "Fix again with my marks" sends exactly what I marked.** Given one kept passage and one
+marked for change, when the user presses Fix again with my marks, from the keyboard, then the model
+is shown exactly those two passages and the rewrite they came from; the user is told it was refined,
+with the before and after scores; the new rewrite joins the history as "2 of 2"; the What changed
+line says it was refined with their marks, one kept and one changed; the new rewrite carries no
+highlights and has the focus — the button that held it is disabled while the request runs and gone
+when it is back, and neither may drop the focus to the top of the page; and stepping back to the
+first rewrite does not bring the old highlights back. Nor does a mark made there outlive a step
+forward and back through the history, or a fresh "Fix prompt": leaving a rewrite is what ends its
+marks, whichever way it is left. Marks are offsets into one particular text, and painted over any
+other text they would highlight nonsense. And given a rewrite in which two words of the kept
+sentence stand once more on their own and are marked for change there, when the user fixes again,
+then the model is shown one passage to keep and one to change, as the bar counted, and the What
+changed line says one kept and one changed, with no warning (M1 is the same journey at the API). It
+fails if a highlight survives onto a rewrite it was not made on, if what the model receives differs
+from what was highlighted and counted on screen, or if a keyboard user is left at the top of the
+page for having pressed the button.
+
+**M9 — The rewrite stays exact while marks are showing.** Given highlights of both kinds, one of two
+lines and one of four lines and well over a hundred characters, when the user reads the rewrite or
+presses Copy, then the text on screen and the text on the clipboard are the fixed prompt character
+for character, with nothing from the marking bar in either; and each highlight is a button whose
+name gives a screen reader the verdict and the whole passage, its line breaks read as spaces. H7
+promises that what is copied is what is displayed; highlights must not be the thing that breaks it.
+And a button's name is all a screen reader is given of it, so a name that stops after sixty
+characters leaves a blind user unable to tell what they marked. It fails if a highlight adds, drops
+or moves a single character, including a line break, or if the name of a long highlight ends before
+the passage does.
+
+**M10 — Marks are readable and fit a small window.** Given a window of 1024 by 720 with both kinds of
+highlight, the count and a live selection on screen, when contrast is measured, then every piece of
+text — inside both highlight colours and on the bar — meets the AA threshold; nothing scrolls
+horizontally; and all four marking controls are on screen. This is H12 and H13 held to the one part
+of the interface that paints coloured backgrounds behind the user's text. It fails on a single
+pairing below the threshold, or if the bar refuses to wrap.
+
+**M11 — Fixing again still works after I edited the prompt.** Given a completed fix on which the
+user marked a passage, when they type a character in the editor, then the rewrite is parked behind
+the edited-prompt notice and there is nothing to fix again with; when they delete that character
+again, then the rewrite is back with the mark on it; when they change the text in the editor and
+press Show last fix, then the parked rewrite comes back with the mark still on it; and when they
+press Fix again with my marks, then the new rewrite is shown rather than parked behind the
+edited-prompt notice, the model was asked to refine the prompt that rewrite was made for and not the
+text now in the editor, and the editor still holds the user's edit. H4 parks a result when the
+editor moves on, which is honest for a fix and wrong for a refinement the user has just asked for by
+name. And parking is not leaving: marks end with a new fix or a step through the history (M8), not
+with a keystroke in another pane. It fails if the user presses the button and appears to get
+nothing, or if a slip on the keyboard costs them their marks.
+
+### Group N — Looking the same every time
+
+The user in this group is a developer of PromptFixer who has changed something and wants to know
+what it did to the interface. The check is Elastishot: every screen is reached by driving the built
+app the way a user would, against the scripted model, and compared with a picture that was approved
+on the same machine. The scenarios run the real command-line tool and the two npm scripts around it,
+and read the report they write. Their background is that every screen — the empty editor, the
+Issues tab, the Fixed tab, the Fixed tab with marks on it, the Diff tab, the Changes tab and the
+Library drawer — has been captured and approved at the desktop and the small window size.
+
+**N1 — Every screen, captured again, matches its approved picture.** Given the approved pictures,
+when every screen is captured again at both window sizes, then the check passes and no screen
+reports a changed, added or removed region at either size. This is the scenario the rest of the
+group stands on: a visual check that cries wolf gets switched off within the week, so the first
+thing it has to prove is that it can look at the same interface twice and see the same thing —
+with a model list that arrives late, a score that appears after a pause, a text cursor that blinks
+and a mouse that has to be somewhere. It fails if any of fourteen pictures differs from itself.
+
+**N2 — A rewrite that came back different is reported on the Fixed screen, by name.** Given a model
+that now words one line of the rewrite differently — same sections, same scores, same list of
+changes — when the Fixed, Issues and Changes screens are captured, then the check fails; the Fixed
+screen reports a change no taller than that one line and names the rewrite as the element that
+changed, and nothing else; and the Issues and Changes screens, which do not show the rewrite, report
+nothing. "Something changed on the Fixed tab" sends a developer hunting; "the rewrite changed,
+here" is an answer. It fails if the change goes unnoticed, if it is reported without the element
+behind it, or if a screen that does not show the rewrite is blamed for it.
+
+**N3 — Marks are part of the picture.** Given the approved pictures of the Fixed screen with and
+without marks, when the two are compared, then the difference names the marking bar, its "Clear
+marks" and "Fix again with my marks" buttons and both highlighted passages, each as the mark it is;
+each highlighted passage is a reported region; and nothing in the editor pane, and nothing above the
+marking bar, is reported. Given both highlights have lost all their paint and nothing has moved,
+when the marked screen is captured at both window sizes, then at each size the check fails and names
+the two highlighted passages, each with changed pixels behind it, and nothing else. And given the
+highlight of a kept passage has lost its green, when the marked screen is captured, then the check
+fails and names that highlighted passage and nothing else. Group M proves that marks work; this
+proves that they show, and that showing them disturbs nothing else. The second comparison is there
+because the first cannot prove it alone: in the small window the bar wraps and pushes the rewrite
+down, so a region lies over every passage whatever its highlight looks like, and only taking the
+paint away in place shows that there was paint. It fails if a highlight could lose its paint at
+either size, or change colour, without the check noticing, or if marking a passage moves something
+it has no business moving.
+
+**N4 — What honestly varies between two runs raises no alarm.** Given a model that takes longer to
+answer and reports other token counts, and a server whose calendar is weeks ahead so that a saved
+prompt carries another date, when the Fixed, Changes and Library screens are captured, then the
+check passes and no screen reports a region. The seconds in "Fixed in 1.2s", the run details and the
+day a prompt was saved are true, and different every time; a picture that includes them fails on
+every honest run. The scenario first confirms that the fix really was slower and the saved prompt
+really is dated ahead, so it cannot pass by varying nothing. It fails if a toast, a duration, a
+token count or a date reaches a picture.
+
+**N5 — A screen with no approved picture, or a changed look, fails the check until I approve it.**
+Given approved pictures that lack one screen, and a Fix prompt button that has been restyled, when
+the developer runs `npm run visual`, then it fails: the screen without a picture is reported as new,
+with the missing picture as the reason, and the other names the Fix prompt button. When they run
+`npm run visual:approve`, then it succeeds, and when they run `npm run visual` again, then it
+passes. A check that treats "nothing to compare with" as "nothing changed" passes on every fresh
+clone and every new screen, which is exactly when somebody should be looking. It fails if a missing
+picture passes silently, or if approving leaves either screen still failing.
+
+**N6 — The one command hands back the verdict and leaves nothing running.** When the developer runs
+`npm run visual` on a screen that has not changed, then it exits 0; on a screen that has, it exits 1
+and a report a CI job can read has been written, carrying the failure and the element behind it; and
+when they mistype the name of a screen, it exits 2 and lists the screens there are. After each run
+the server the command started no longer answers and its temporary folders are gone. The command
+starts a model stand-in and a server to have something to photograph, and a wrapper like that is
+where an exit code gets swallowed and a process gets orphaned. It fails if any of the three verdicts
+comes back as another, or if a run leaves a server or a folder behind — including the run that
+never got as far as a capture.
+
+**N7 — Pointed at the wrong place, the check says so and harms nothing.** When the check is run with
+no server to look at, then it stops with an error that says to use `npm run visual`. Given a
+PromptFixer that somebody is using, with a prompt saved in its library, when the check is pointed at
+it, then it stops with an error and the saved prompt is still there. Every screen starts from an
+empty library so that one capture cannot leak into the next, and emptying a library is the one
+destructive thing this tool does; it may only ever do it to a server that was started for the
+purpose. It fails if a developer's saved prompts can be deleted by a test tool aimed at the wrong
+port.
+
 ---
 
 ## Part 4 — Traceability and adoption
@@ -778,7 +1043,16 @@ between us and a broken interface. Group I sits on top of `server/diff.test.js`.
 straight promotion of `server/cli.test.js`, which is already written in almost the right language.
 Group K sits on top of `electron/env.test.js` and `electron/handlers.test.js` and adds the packaged-app
 scenarios nothing currently covers. Group L sits on top of `vite.config.test.js` and the
-configuration handling.
+configuration handling. Group M covers marking a rewrite and fixing it again, and sits on two
+layers: the mark arithmetic in `src/lib/ui.ts` — adding and removing a mark, every way two marks can
+overlap, cutting the rewrite into segments that always join back to the text, the payload, the
+gate on the button and the "refined with your marks" note — is unit-tested in `server/ui.test.js`,
+and the server's half — coercing the marks, the marks block of the model message, the guard's two
+new checks, the retry, which warning wins, the leak scrub and the tie-break between two attempts —
+stays as component tests in `server/e2e.test.js`. Group N covers the visual check, with
+`scripts/visual.test.js` beneath it for the runner's argument parsing, its approve step, the
+exit-code mapping and the shape of `elastishot.config.mjs`; the comparison engine is Elastishot's
+and is tested in its own repository.
 
 That leaves exactly one thing with no automated coverage at any tier, and it should stay that way:
 whether the rewrites are actually good. `docs/DEMO.md` and its eight before-and-after runs are the
@@ -789,8 +1063,10 @@ instrument for that, regenerated whenever the linter or the metaprompt changes, 
 Do the harness sprint first and change no product behaviour while doing it: extract the server
 fixture, replace the marker-driven stub with a scriptable one, add the browser driver, add the
 local-model double, wire the two CI jobs. Then adopt the loop on the next story only — three amigos,
-scenarios first, red, implement, green, demo — rather than trying to backfill all ninety-five
-scenarios up front, which would be a month of writing tests for code that already works.
+scenarios first, red, implement, green, demo — rather than trying to backfill up front every
+scenario Part 3 writes for behaviour the product already had, which would be a month of writing tests
+for code that already works. A scenario written ahead of its code is not backfill but the loop
+itself, which is how Groups M and N arrived.
 
 Backfill opportunistically instead, on two triggers. When a story touches a capability, that
 capability's group gets written. When a bug is found, it gets a scenario at the tier that should have

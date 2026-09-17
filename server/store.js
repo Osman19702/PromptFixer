@@ -56,11 +56,38 @@ async function readAll() {
   }
 }
 
+// Windows refuses to rename over a file that anything has open at that instant
+// — an indexer, antivirus, a backup tool reading library.json — with EPERM,
+// EBUSY or EACCES. The reader is gone milliseconds later, so the rename waits
+// and tries again rather than turn somebody else's read into a lost save.
+// Many short waits, about a second in all: against a reader that keeps coming
+// back, every try is another draw, and long waits buy no better odds.
+const RENAME_RETRY_MS = [5, 10, 20, 40, ...Array(18).fill(50)]
+const HELD_OPEN = new Set(['EPERM', 'EBUSY', 'EACCES'])
+
+/** fs.rename that outlasts a target briefly held open. `rename` and `waits` are there for the test. */
+export async function renameOver(from, to, { rename = fs.rename, waits = RENAME_RETRY_MS } = {}) {
+  for (let i = 0; ; i++) {
+    try {
+      return await rename(from, to)
+    } catch (err) {
+      if (!HELD_OPEN.has(err.code) || i >= waits.length) throw err
+      await new Promise((resolve) => setTimeout(resolve, waits[i]))
+    }
+  }
+}
+
 async function writeAll(entries) {
   await fs.mkdir(DIR, { recursive: true })
   const tmp = `${FILE}.tmp-${process.pid}`
   await fs.writeFile(tmp, JSON.stringify({ version: 1, entries }, null, 2), 'utf8')
-  await fs.rename(tmp, FILE)
+  try {
+    await renameOver(tmp, FILE)
+  } catch (err) {
+    // The save is lost either way; do not leave its temp file next to the library as well.
+    await fs.rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
 /** Serialise mutations so two concurrent saves cannot clobber each other. */

@@ -38,7 +38,7 @@ export function IssueList({
         )}
       </div>
 
-      <div className="issue-list">
+      <div className="issue-list" data-testid="issue-list">
         {analysis.issues.map((issue, index) => (
           <details className={`issue ${issue.severity}`} key={`${issue.id}-${index}`} open={index < 3}>
             <summary>

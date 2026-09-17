@@ -5,13 +5,15 @@
  * smuggling markers through the prompt text, so a scenario reads "given the
  * model returns a different prompt, then a faithful edit" rather than "given
  * the prompt contains ALWAYS_DIVERGE". When the queue is empty the stub
- * answers with the default balanced rewrite from fixtures.js.
+ * answers with the default balanced rewrite from fixtures.js, unless the
+ * scenario has said what the model answers from now on (`stub.byDefault`).
  *
  * Every request the server makes is recorded in `stub.requests`, parsed into
  * the things a scenario can legitimately observe: the original prompt the
  * model was asked to fix, whether it was a corrective retry, which linter
- * findings it was shown, how many library examples it was shown, and whether
- * the server abandoned the connection.
+ * findings it was shown, how many library examples it was shown, which of the
+ * user's marks it was shown on a "fix again", and whether the server abandoned
+ * the connection.
  */
 
 import http from 'node:http'
@@ -33,9 +35,26 @@ function parseFindings(user) {
     .map((m) => ({ severity: m[1], category: m[2], title: m[3].trim() }))
 }
 
+/**
+ * The user's marks on an earlier rewrite, as the model was shown them:
+ * `{ previous, keep, change }`, or null on an ordinary fix. The server escapes
+ * a passage's own `</keep>`-style tags so a mark cannot end early; that is
+ * undone here, so a scenario reads the passage the user marked.
+ */
+function parseFeedback(user) {
+  const previous = user.match(/<previous_rewrite>\n([\s\S]*?)\n<\/previous_rewrite>/)?.[1]
+  const block = user.match(/<user_feedback>\n([\s\S]*?)\n<\/user_feedback>/)?.[1]
+  if (previous === undefined || block === undefined) return null
+  const literal = (text) => text.replace(/&lt;(?=\s*(?:\/\s*)?(?:keep|change|user_feedback|previous_rewrite)\s*>)/gi, '<')
+  const passages = (tag) =>
+    [...block.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g'))].map((m) => literal(m[1]))
+  return { previous: literal(previous), keep: passages('keep'), change: passages('change') }
+}
+
 export async function startStub() {
   const requests = []
   let queued = []
+  let unqueued = { json: FIX_RESPONSE }
   let modelsReply = { models: ['stub-large', 'stub-small'] }
 
   const server = http.createServer((req, res) => {
@@ -73,6 +92,7 @@ export async function startStub() {
         exampleTexts: [...user.matchAll(/<before>([\s\S]*?)<\/before>/g)].map((m) => m[1]),
         exampleAfters: [...user.matchAll(/<after>([\s\S]*?)<\/after>/g)].map((m) => m[1]),
         notes: user.match(/<user_notes>\n([\s\S]*?)\n<\/user_notes>/)?.[1] || '',
+        feedback: parseFeedback(user),
         upstreamAborted: false,
       }
       requests.push(record)
@@ -82,7 +102,7 @@ export async function startStub() {
         if (!res.writableFinished) record.upstreamAborted = true
       })
 
-      const spec = normalise(queued.length ? queued.shift() : { json: FIX_RESPONSE }, record)
+      const spec = normalise(queued.length ? queued.shift() : unqueued, record)
 
       const respond = () => {
         if (spec.stall === 'headers') return // never answer
@@ -100,7 +120,7 @@ export async function startStub() {
               finish_reason: spec.finishReason || 'stop',
             },
           ],
-          usage: { prompt_tokens: 812, completion_tokens: 204 },
+          usage: spec.usage || { prompt_tokens: 812, completion_tokens: 204 },
         })
         if (spec.stall === 'body') {
           res.write(payload.slice(0, 20)) // headers and a fragment, then silence
@@ -124,6 +144,14 @@ export async function startStub() {
     queue(...specs) {
       queued.push(...specs)
     },
+    /**
+     * What every completion answers once the queue is empty, until reset() —
+     * for a run whose requests the scenario cannot count, such as a visual check
+     * that fixes the same prompt once per screen.
+     */
+    byDefault(spec) {
+      unqueued = spec
+    },
     /** What GET /models answers: `{ models: [...] }` or `{ status: 401 }`. */
     models(reply) {
       modelsReply = reply
@@ -131,6 +159,7 @@ export async function startStub() {
     /** Forget queued replies and recorded requests; call between scenarios. */
     reset() {
       queued = []
+      unqueued = { json: FIX_RESPONSE }
       requests.length = 0
       modelsReply = { models: ['stub-large', 'stub-small'] }
     },

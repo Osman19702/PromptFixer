@@ -1,0 +1,179 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { startApp } from '../acceptance/support/app.js'
+import { approveArgs, exitCodeOf, needsApproval, parseArgs, runArgs, runFolder, USAGE } from './visual.mjs'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const SCRIPT = path.join(here, 'visual.mjs')
+const CONFIG = path.join(here, '..', 'elastishot.config.mjs')
+const run = (args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' })
+
+// The config reads its environment once, when it is imported; a query string makes each import a fresh one.
+let imports = 0
+async function loadConfig(env) {
+  const saved = { ...process.env }
+  delete process.env.PROMPTFIXER_VISUAL_URL
+  delete process.env.PROMPTFIXER_VISUAL_BASELINES
+  delete process.env.PROMPTFIXER_VISUAL_VARIANT
+  Object.assign(process.env, env)
+  try {
+    return (await import(`${pathToFileURL(CONFIG).href}?load=${++imports}`)).default
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
+    Object.assign(process.env, saved)
+  }
+}
+
+test('no arguments: build, compare every target', () => {
+  assert.deepEqual(parseArgs([]), { update: false, build: true, help: false, out: null, targets: [] })
+})
+
+test('flags may come in any order; everything else is a target', () => {
+  const args = parseArgs(['--no-build', 'fixed', '--update', 'marked/small', '--out', '.elastishot/runs/mine'])
+  assert.deepEqual(args, { update: true, build: false, help: false, out: '.elastishot/runs/mine', targets: ['fixed', 'marked/small'] })
+})
+
+test('an unknown option is an error, not a target', () => {
+  assert.throws(() => parseArgs(['--updat']), /unknown option --updat/)
+  assert.throws(() => parseArgs(['--out']), /--out needs a folder/)
+  assert.throws(() => parseArgs(['--out', '--update']), /--out needs a folder/)
+})
+
+test('the Elastishot command line: run, the config, JUnit, then the targets', () => {
+  assert.deepEqual(runArgs(parseArgs([]), 'cfg.mjs'), ['run', '--config', 'cfg.mjs', '--junit'])
+  assert.deepEqual(runArgs(parseArgs(['--update', 'fixed', 'diff/small']), 'cfg.mjs'), [
+    'run',
+    '--config',
+    'cfg.mjs',
+    '--junit',
+    '--update',
+    'fixed',
+    'diff/small',
+  ])
+  assert.deepEqual(runArgs(parseArgs(['--out', 'there', 'empty']), 'cfg.mjs'), ['run', '--config', 'cfg.mjs', '--junit', '--out', 'there', 'empty'])
+  // --no-build is the runner's own business
+  assert.ok(!runArgs(parseArgs(['--no-build'])).includes('--no-build'))
+  assert.equal(path.basename(runArgs(parseArgs([]))[2]), 'elastishot.config.mjs')
+})
+
+test('approving promotes what failed, and only after an --update run that found differences', () => {
+  // from the run it names: Elastishot's "latest" may by then be somebody else's run
+  assert.deepEqual(approveArgs('runs/mine', 'cfg.mjs'), ['approve', 'runs/mine', '--all', '--config', 'cfg.mjs'])
+  const folder = runFolder(new Date('2026-09-17T14:49:38.123Z'))
+  assert.equal(path.basename(folder), '2026-09-17T14-49-38Z')
+  assert.equal(path.relative(path.join(here, '..'), path.dirname(folder)), path.join('.elastishot', 'runs'))
+  assert.equal(needsApproval(parseArgs(['--update']), 1), true)
+  assert.equal(needsApproval(parseArgs(['--update']), 0), false)
+  // an error is never approved away
+  assert.equal(needsApproval(parseArgs(['--update']), 2), false)
+  assert.equal(needsApproval(parseArgs([]), 1), false)
+})
+
+test("Elastishot's exit code is passed through; a killed run is an error", () => {
+  assert.equal(exitCodeOf(0), 0)
+  assert.equal(exitCodeOf(1), 1)
+  assert.equal(exitCodeOf(2), 2)
+  assert.equal(exitCodeOf(null), 2)
+  assert.equal(exitCodeOf(undefined), 2)
+})
+
+test('--help prints the usage and starts nothing; a bad option exits 2 with it', () => {
+  const help = run(['--help'])
+  assert.equal(help.status, 0)
+  assert.equal(help.stdout.trim(), USAGE)
+  const bad = run(['--frobnicate'])
+  assert.equal(bad.status, 2)
+  assert.match(bad.stderr, /visual: unknown option --frobnicate/)
+  assert.match(bad.stderr, /Usage: node scripts\/visual\.mjs/)
+})
+
+test('the config without a server URL says how to run the check', async () => {
+  await assert.rejects(loadConfig({}), /PROMPTFIXER_VISUAL_URL is not set.*npm run visual/s)
+})
+
+test('the config: seven screens at two sizes, each reached by a driver, against the given server', async () => {
+  const config = await loadConfig({ PROMPTFIXER_VISUAL_URL: 'http://127.0.0.1:4321/' })
+  assert.deepEqual(config.targets.map((t) => t.name), ['empty', 'issues', 'fixed', 'marked', 'diff', 'changes', 'library'])
+  for (const t of config.targets) {
+    assert.equal(t.url, 'http://127.0.0.1:4321/')
+    assert.equal(typeof t.capture.waitFor, 'function', `${t.name} is driven, not slept for`)
+  }
+  assert.deepEqual(config.viewports, [
+    { name: 'desktop', width: 1360, height: 880 },
+    { name: 'small', width: 1024, height: 720 },
+  ])
+  assert.equal(config.threshold, 0.98)
+  assert.equal(config.baselineDir, '.elastishot/baselines')
+  assert.equal(config.outDir, '.elastishot/runs')
+  // what differs between two honest captures stays off the picture
+  assert.ok(config.capture.hide.some((s) => s.includes('toasts')))
+  assert.ok(config.capture.hide.some((s) => s.includes('library-entry-date')))
+  assert.ok(config.capture.mask.some((s) => s.includes('run-details')))
+})
+
+test('the config takes its baselines folder and its variant from the environment', async () => {
+  const config = await loadConfig({
+    PROMPTFIXER_VISUAL_URL: 'http://127.0.0.1:4321',
+    PROMPTFIXER_VISUAL_BASELINES: '.elastishot/runs/acceptance-baselines',
+    PROMPTFIXER_VISUAL_VARIANT: 'keep-colour',
+  })
+  assert.equal(config.baselineDir, '.elastishot/runs/acceptance-baselines')
+  // "PROMPTFIXER_VISUAL_BASELINES= npm run visual:approve" must not approve into the project root
+  for (const blank of ['', '   ']) {
+    const unset = await loadConfig({ PROMPTFIXER_VISUAL_URL: 'http://127.0.0.1:4321', PROMPTFIXER_VISUAL_BASELINES: blank })
+    assert.equal(unset.baselineDir, '.elastishot/baselines', `baselines folder for ${JSON.stringify(blank)}`)
+  }
+  await assert.rejects(
+    loadConfig({ PROMPTFIXER_VISUAL_URL: 'http://127.0.0.1:4321', PROMPTFIXER_VISUAL_VARIANT: 'nope' }),
+    /"nope" is not a variant \(known: keep-colour, marks-plain, rewrite-type, fix-button\)/
+  )
+})
+
+// --- the server the check starts -------------------------------------------------
+
+// A start that fails hands its caller no stop(), so startApp has to leave nothing
+// behind by itself. The temp folder is pointed at an empty one to see what it left.
+async function inEmptyTemp(body) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfixer-visual-test-'))
+  const saved = { TMP: process.env.TMP, TEMP: process.env.TEMP, TMPDIR: process.env.TMPDIR }
+  Object.assign(process.env, { TMP: tmp, TEMP: tmp, TMPDIR: tmp })
+  try {
+    return await body(tmp)
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  }
+}
+
+test('a server that exits before it is ready leaves no folders behind', async () => {
+  await inEmptyTemp(async (tmp) => {
+    // a preload that quits: the server is gone before it can say it is ready, without a word on stderr
+    const quit = path.join(tmp, 'quit.cjs')
+    fs.writeFileSync(quit, 'process.exit(3)\n')
+    const preload = `--require "${quit.split(path.sep).join('/')}"`
+    await assert.rejects(startApp({ env: { NODE_OPTIONS: preload } }), /server exited with code 3 before it was ready/)
+    assert.deepEqual(fs.readdirSync(tmp), ['quit.cjs'])
+  })
+})
+
+test('a server that cannot be spawned leaves no folders behind', async () => {
+  await inEmptyTemp(async (tmp) => {
+    const node = process.execPath
+    process.execPath = path.join(tmp, 'no-such-node')
+    try {
+      // the "error" path: there is no process to stop, only the folders to remove
+      await assert.rejects(startApp(), { code: 'ENOENT' })
+    } finally {
+      process.execPath = node
+    }
+    assert.deepEqual(fs.readdirSync(tmp), [])
+  })
+})

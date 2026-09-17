@@ -24,7 +24,7 @@ export function ScorePanel({ analysis, categories, compareTo }: Props) {
   const keys = Object.keys(categories) as CategoryKey[]
 
   return (
-    <div className="scorecard">
+    <div className="scorecard" data-testid="score-panel">
       <div
         className="dial"
         style={

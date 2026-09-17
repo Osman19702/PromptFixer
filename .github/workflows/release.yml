@@ -1,0 +1,261 @@
+name: Release
+
+# Pushing a tag v<version> builds the Windows installer for that version and
+# attaches it, its .blockmap and SHA256SUMS.txt to a DRAFT GitHub release whose
+# notes are the version's CHANGELOG.md section. A draft, because the installer
+# is not code-signed: the author downloads it, checks it against
+# SHA256SUMS.txt and publishes by hand (docs/RELEASING.md).
+#
+# Started by hand instead (gh workflow run release.yml, or "Run workflow" on
+# the Actions tab) it is a rehearsal: the same steps on the same runner for the
+# version in package.json, but no release is looked at, created or changed, and
+# what was built is kept as a workflow artifact for three days. Nothing else in
+# this repository runs on a runner, so this is how a release commit meets one
+# before its tag exists (step 5 of docs/RELEASING.md).
+#
+# The tag must match package.json, and package.json must match
+# package-lock.json and CHANGELOG.md: scripts/check-release.mjs refuses
+# anything else before a single dependency is installed.
+#
+# What this does NOT run: the acceptance suite (npm run test:acceptance - the
+# API, CLI, browser, Electron and visual scenarios) and the real-model
+# scenarios. They need Playwright's browsers, a desktop window and, for the
+# real-model ones, the 2.5 GB model and a GPU, and they have only ever been
+# run on the development machine. They are step 3 of docs/RELEASING.md, before
+# the tag exists. The runner repeats what is cheap and the same on every
+# machine - the typecheck, the build and the unit and component tests - and it
+# never launches the installer it builds.
+#
+# A re-run is safe, and so is a tag that was moved. The notes of a draft end
+# with the commit it was built from. A release that has all three files and was
+# built from the commit the tag points at is left alone, and nothing is built.
+# A draft that is missing a file (an upload that broke off) or was built from
+# another commit (the tag has moved since) gets all three files and the notes
+# again from one fresh build, so SHA256SUMS.txt always describes the files next
+# to it and the installer is always the tagged commit's. A published release is
+# never changed. A run that is older than its tag - re-run after the tag moved -
+# stops before it builds anything.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A tag pushed twice must not race itself to "gh release create".
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # electron-builder only builds an NSIS installer with its native parts
+    # intact on Windows; the default shell there is PowerShell, the steps
+    # below are bash (Git Bash, which the runner has).
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 22: server/ui.test.js imports TypeScript sources directly (type
+      # stripping, on by default from 22.18), and Electron 44 asks for 22.12.
+      # The npm cache is restored by package-lock.json's hash. Electron's own
+      # download (about 110 MB, fetched by electron-builder) is not cached:
+      # releases are further apart than the seven days a cache lives.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # TAG, INSTALLER, COMMIT, LINKS and PRERELEASE are for every step below;
+      # MODE is rehearse here, or create, upload or skip two steps further on.
+      - name: What is being built
+        run: |
+          COMMIT="$(git rev-parse HEAD)"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            TAG="$GITHUB_REF_NAME"
+            REF="$TAG"
+          else
+            # A rehearsal has no tag: it is one for the tag package.json asks for.
+            TAG="v$(node -p "require('./package.json').version" | tr -d '\r')"
+            REF="$COMMIT"
+            echo "MODE=rehearse" >> "$GITHUB_ENV"
+            echo "a rehearsal of $TAG at $COMMIT ($GITHUB_REF_NAME): no release is created or changed"
+          fi
+          # 0.3.0-rc.1 is a pre-release by Semantic Versioning; the "-" counts
+          # only before build metadata, which may hold one of its own.
+          case "${TAG%%+*}" in *-*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+          {
+            echo "TAG=$TAG"
+            echo "INSTALLER=PromptFixer-${TAG#v}-win-x64.exe"
+            echo "COMMIT=$COMMIT"
+            echo "LINKS=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$REF"
+            echo "PRERELEASE=$PRERELEASE"
+          } >> "$GITHUB_ENV"
+
+      - name: Tag, package.json, package-lock.json and CHANGELOG.md agree
+        run: node scripts/check-release.mjs --tag "$TAG"
+
+      # A re-run of an earlier run builds the commit the tag pointed at then.
+      # Once the tag has moved, that build must not reach the tag's draft.
+      - name: The tag still points at this commit
+        if: env.MODE != 'rehearse'
+        run: |
+          # An annotated tag lists twice; the second line, with ^{}, is its commit.
+          NOW="$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -n 1 | cut -f 1)"
+          if [ "$NOW" != "$COMMIT" ]; then
+            echo "$TAG pointed at $COMMIT when this run started and points at ${NOW:-nothing} now. This run is out of date and builds nothing; the run that counts is the one the last push of the tag started."
+            exit 1
+          fi
+
+      - name: Is there a release for this tag already?
+        if: env.MODE != 'rehearse'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if DRAFT="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> "$RUNNER_TEMP/release-view.txt")"; then
+            DRAFT="$(tr -d '\r' <<< "$DRAFT")"
+          elif grep -qi 'release not found' "$RUNNER_TEMP/release-view.txt"; then
+            echo "no release for $TAG yet; it will be created as a draft"
+            echo "MODE=create" >> "$GITHUB_ENV"
+            exit 0
+          else
+            # Not "there is none" but "could not ask". Creating one now could leave two drafts for one tag.
+            cat "$RUNNER_TEMP/release-view.txt"
+            exit 1
+          fi
+          # Only files that arrived whole count: an upload that broke off stays listed in another state.
+          HAVE="$(gh release view "$TAG" --json assets --jq '.assets[] | select(.state == "uploaded") | .name' | tr -d '\r')"
+          MISSING=""
+          for FILE in "$INSTALLER" "$INSTALLER.blockmap" SHA256SUMS.txt; do
+            grep -qxF "$FILE" <<< "$HAVE" || MISSING="$MISSING $FILE"
+          done
+          # The last line of the notes written below; empty for a release made or rewritten by hand.
+          BUILT="$(gh release view "$TAG" --json body --jq .body | tr -d '\r' | sed -n 's/.*from commit \([0-9a-f]\{40\}\).*/\1/p' | tail -n 1)"
+          if [ -z "$MISSING" ] && [ "$BUILT" = "$COMMIT" ]; then
+            echo "release $TAG has the installer, its blockmap and SHA256SUMS.txt, built from this commit; nothing is built"
+            MODE=skip
+          elif [ "$DRAFT" = "true" ]; then
+            [ -z "$MISSING" ] || echo "the draft for $TAG is missing:$MISSING"
+            [ "$BUILT" = "$COMMIT" ] || echo "the draft for $TAG was built from ${BUILT:-a commit its notes do not name}; the tag is at $COMMIT"
+            echo "all three files and the notes are built and uploaded again"
+            MODE=upload
+          elif [ -n "$MISSING" ]; then
+            # Somebody may have downloaded what is there; a rebuild has another hash.
+            echo "release $TAG is published but is missing:$MISSING. Fix it by hand (docs/RELEASING.md, If it fails)."
+            exit 1
+          elif [ -z "$BUILT" ]; then
+            echo "release $TAG is published and has all three files; its notes do not name the commit it was built from, so that is not checked. Nothing is built."
+            MODE=skip
+          else
+            echo "release $TAG is published and was built from $BUILT, but the tag is at $COMMIT. The tag of a published release must not move: put it back on $BUILT and fix forward (docs/RELEASING.md, If it fails)."
+            exit 1
+          fi
+          echo "MODE=$MODE" >> "$GITHUB_ENV"
+
+      # node-llama-cpp's postinstall probes which llama.cpp binary loads on
+      # THIS machine and compiles one from source when none does. The
+      # installer needs neither: it ships the prebuilt CPU, Vulkan and CUDA
+      # packages that npm ci has already fetched, and picks one on the user's
+      # machine. So the probe is switched off, and a runner without a GPU
+      # driver cannot turn a release into a CMake build. (Which install
+      # scripts may run at all: npm 10, which Node 22 brings, runs them all; a
+      # newer npm runs the ones approved under allowScripts in package.json.
+      # They are the same ones.)
+      - name: npm ci
+        if: env.MODE != 'skip'
+        env:
+          NODE_LLAMA_CPP_SKIP_DOWNLOAD: 'true'
+        run: npm ci
+
+      - if: env.MODE != 'skip'
+        run: npm run typecheck
+
+      # Before the tests, as in docs/RELEASING.md: server/e2e.test.js checks
+      # that the built frontend is served, and skips that without dist/.
+      - if: env.MODE != 'skip'
+        run: npm run build
+
+      - if: env.MODE != 'skip'
+        run: npm test
+
+      # --publish never, and no GH_TOKEN in this step: package.json has a
+      # build.publish block, and on a tag build electron-builder would
+      # otherwise upload to a release of its own making. This workflow
+      # creates the release, after the checksums exist.
+      - name: Installer
+        if: env.MODE != 'skip'
+        run: |
+          npx electron-builder --win --x64 --publish never
+          ls -la release
+          test -f "release/$INSTALLER" || { echo "electron-builder did not write release/$INSTALLER"; exit 1; }
+          test -f "release/$INSTALLER.blockmap" || { echo "electron-builder did not write release/$INSTALLER.blockmap"; exit 1; }
+
+      - name: SHA256SUMS.txt
+        if: env.MODE != 'skip'
+        run: |
+          npm run release:checksums
+          npm run release:checksums -- --check
+
+      # The changelog section, its relative links made absolute because a
+      # release page is not inside the repository. Then what a download needs:
+      # the file, its size and hash as built just now, and the SmartScreen
+      # note. The last line is read back by "Is there a release" above.
+      - name: Release notes from the changelog
+        if: env.MODE != 'skip'
+        run: |
+          SHA="$(awk -v f="$INSTALLER" '$2 == f { print $1 }' release/SHA256SUMS.txt)"
+          MIB=$(( $(stat -c %s "release/$INSTALLER") / 1048576 ))
+          {
+            node scripts/changelog-section.mjs "${TAG#v}" --links "$LINKS"
+            printf '\n---\n\n'
+            printf '**Download:** `%s` (%s MiB). Windows 10/11, 64-bit. The model (2.5 GB, or the 1 GB "lite" tier) is downloaded on first run; installing over an earlier version keeps your library and the model.\n\n' "$INSTALLER" "$MIB"
+            printf '**Verify:** installer SHA-256 `%s` (`SHA256SUMS.txt` is attached). PowerShell: `(Get-FileHash .\\%s).Hash.ToLower()` must equal it.\n\n' "$SHA" "$INSTALLER"
+            printf '**Not code-signed yet:** Windows shows "Windows protected your PC" - *More info*, then *Run anyway*. Compare the hash first. Full guide: [docs/INSTALL.md](%s/docs/INSTALL.md).\n\n' "$LINKS"
+            printf 'Built by [the Release workflow](%s) from commit %s.\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" "$COMMIT"
+          } > release/RELEASE_NOTES.md
+          cat release/RELEASE_NOTES.md
+
+      - name: Draft GitHub release
+        if: env.MODE == 'create'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" --draft --verify-tag --prerelease="$PRERELEASE" \
+            --title "PromptFixer ${TAG#v}" --notes-file release/RELEASE_NOTES.md \
+            "release/$INSTALLER" "release/$INSTALLER.blockmap" release/SHA256SUMS.txt
+
+      # The files first and the notes last: the notes name the commit, and
+      # they must not say "this commit" while an older file is still attached.
+      - name: Replace what the draft has
+        if: env.MODE == 'upload'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" --clobber \
+            "release/$INSTALLER" "release/$INSTALLER.blockmap" release/SHA256SUMS.txt
+          gh release edit "$TAG" --prerelease="$PRERELEASE" --notes-file release/RELEASE_NOTES.md
+
+      - name: Rehearsal - the notes, as they would be
+        if: env.MODE == 'rehearse'
+        run: cat release/RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The installer is compressed already; zipping 340 MiB again only takes time.
+      - name: Rehearsal - keep what was built, release nothing
+        if: env.MODE == 'rehearse'
+        uses: actions/upload-artifact@v7
+        with:
+          name: PromptFixer-${{ env.TAG }}-rehearsal
+          path: |
+            release/${{ env.INSTALLER }}
+            release/${{ env.INSTALLER }}.blockmap
+            release/SHA256SUMS.txt
+            release/RELEASE_NOTES.md
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error

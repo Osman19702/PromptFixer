@@ -195,3 +195,89 @@ test('importEntries() skips known ids and malformed entries, and respects the ca
   assert.equal((await store.list()).length, 500)
   assert.ok((await store.get('fits')).createdAt, 'a missing createdAt is filled in')
 })
+
+// --- writing -----------------------------------------------------------------
+
+test('a library.json briefly held open by another program delays the save instead of losing it', async () => {
+  const held = (code) => Object.assign(new Error(`${code}: operation not permitted, rename`), { code })
+  const calls = []
+  const busyTwice = async (from, to) => {
+    calls.push([from, to])
+    if (calls.length === 1) throw held('EPERM')
+    if (calls.length === 2) throw held('EBUSY')
+  }
+  await store.renameOver('a.tmp', 'a.json', { rename: busyTwice, waits: [1, 1, 1] })
+  assert.deepEqual(calls, [['a.tmp', 'a.json'], ['a.tmp', 'a.json'], ['a.tmp', 'a.json']])
+
+  // It gives up once the waits are used, with the error it was given…
+  let tries = 0
+  const alwaysBusy = async () => {
+    tries++
+    throw held('EACCES')
+  }
+  await assert.rejects(store.renameOver('a.tmp', 'a.json', { rename: alwaysBusy, waits: [1, 1] }), { code: 'EACCES' })
+  assert.equal(tries, 3)
+
+  // …and an error that waiting cannot cure is not waited for.
+  tries = 0
+  const diskFull = async () => {
+    tries++
+    throw held('ENOSPC')
+  }
+  await assert.rejects(store.renameOver('a.tmp', 'a.json', { rename: diskFull, waits: [1, 1] }), { code: 'ENOSPC' })
+  assert.equal(tries, 1)
+})
+
+// The same, through save(): Windows will not rename over a read-only file either,
+// so that stands in for the other program. Elsewhere the rename just succeeds.
+const windowsOnly = { skip: process.platform !== 'win32' && 'only Windows refuses to rename over a read-only file' }
+const tempFiles = () => fs.readdirSync(dataDir).filter((name) => name.includes('.tmp-'))
+
+test('save() outlasts a library.json that cannot be replaced for a moment', windowsOnly, async () => {
+  await store.clear()
+  const earlier = await store.save({ original: 'saved before the file was held' })
+  fs.chmodSync(FILE, 0o444)
+  // Let go only once the save has written its temp file, so the rename is refused at least once.
+  let release
+  const written = setInterval(() => {
+    if (!tempFiles().length) return
+    clearInterval(written)
+    release = setTimeout(() => fs.chmodSync(FILE, 0o666), 30)
+  }, 1)
+  try {
+    const during = await store.save({ original: 'saved while the file was held' })
+    assert.ok(release, 'the file was still held when the save reached its rename')
+    assert.deepEqual(
+      (await store.list()).map((e) => e.id),
+      [during.id, earlier.id]
+    )
+    assert.deepEqual(tempFiles(), [])
+  } finally {
+    clearInterval(written)
+    clearTimeout(release)
+    fs.chmodSync(FILE, 0o666)
+  }
+})
+
+test('save() gives up on a library.json that stays held: the error, no temp file, nothing lost', windowsOnly, async () => {
+  await store.clear()
+  const earlier = await store.save({ original: 'saved before the file was held' })
+  fs.chmodSync(FILE, 0o444)
+  try {
+    await assert.rejects(store.save({ original: 'never saved' }), { code: 'EPERM', syscall: 'rename' })
+    assert.deepEqual(tempFiles(), [])
+    assert.deepEqual(
+      (await store.list()).map((e) => e.id),
+      [earlier.id]
+    )
+  } finally {
+    // or every later test, and the cleanup of the temp dir, would be refused as well
+    fs.chmodSync(FILE, 0o666)
+  }
+  // and the queue is not wedged by the save that failed
+  const later = await store.save({ original: 'saved after the file was let go' })
+  assert.deepEqual(
+    (await store.list()).map((e) => e.id),
+    [later.id, earlier.id]
+  )
+})
