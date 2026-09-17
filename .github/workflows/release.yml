@@ -9,9 +9,10 @@ name: Release
 # Started by hand instead (gh workflow run release.yml, or "Run workflow" on
 # the Actions tab) it is a rehearsal: the same steps on the same runner for the
 # version in package.json, but no release is looked at, created or changed, and
-# what was built is kept as a workflow artifact for three days. Nothing else in
-# this repository runs on a runner, so this is how a release commit meets one
-# before its tag exists (step 5 of docs/RELEASING.md).
+# what was built is kept as a workflow artifact for three days. CI (ci.yml) has
+# already run the tests on the pushed commit; electron-builder is the one thing
+# only this workflow does on a runner, so this is how a release commit meets it
+# before its tag exists (step 6 of docs/RELEASING.md).
 #
 # The tag must match package.json, and package.json must match
 # package-lock.json and CHANGELOG.md: scripts/check-release.mjs refuses
@@ -19,12 +20,13 @@ name: Release
 #
 # What this does NOT run: the acceptance suite (npm run test:acceptance - the
 # API, CLI, browser, Electron and visual scenarios) and the real-model
-# scenarios. They need Playwright's browsers, a desktop window and, for the
-# real-model ones, the 2.5 GB model and a GPU, and they have only ever been
-# run on the development machine. They are step 3 of docs/RELEASING.md, before
-# the tag exists. The runner repeats what is cheap and the same on every
-# machine - the typecheck, the build and the unit and component tests - and it
-# never launches the installer it builds.
+# scenarios. CI runs the acceptance suite on every push, so the tagged commit
+# has been through it before this workflow starts (step 5 of
+# docs/RELEASING.md waits for that). The real-model scenarios need the 2.5 GB
+# model and a GPU and belong to the development machine: step 3, before the
+# tag exists. Here the runner repeats what is cheap - the typecheck, the build
+# and the unit and component tests - and it never launches the installer it
+# builds.
 #
 # A re-run is safe, and so is a tag that was moved. The notes of a draft end
 # with the commit it was built from. A release that has all three files and was

@@ -59,7 +59,8 @@ instead — same thing, with a progress bar.
 
 ```
 PromptFixer/
-├── .github/workflows/     release.yml: a pushed tag v<version> builds the installer onto a draft GitHub release;
+├── .github/workflows/     ci.yml: every push runs the checks, the tests and the acceptance suite on a Windows runner
+│                          release.yml: a pushed tag v<version> builds the installer onto a draft GitHub release;
 │                          started by hand it is a rehearsal that releases nothing
 ├── electron/
 │   ├── main.js            Electron main process: starts the server in-process, opens the window
@@ -171,7 +172,9 @@ most of the way for free.
 PromptFixer follows [Semantic Versioning](https://semver.org/) and keeps a
 [changelog](CHANGELOG.md). The version is written down once, in `package.json`: the installer's file
 name and `GET /api/health` read it, and `npm run check:release` fails when the lock file, the
-changelog or a source file disagrees. A release is cut by pushing a tag `v<version>`; the Release
+changelog or a source file disagrees. Every push to any branch is tested on a Windows runner: the
+CI workflow runs that check, the typecheck, the build and the unit and component tests in one job
+and the acceptance suite in another. A release is cut by pushing a tag `v<version>`; the Release
 workflow builds the installer and `SHA256SUMS.txt` onto a draft GitHub release, which is published
 by hand once the download has been checked. Started by hand, the same workflow is a rehearsal: it
 builds everything on the runner and creates no release. The checklist, and what counts as a patch, a minor or a
