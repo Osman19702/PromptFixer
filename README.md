@@ -59,7 +59,8 @@ instead — same thing, with a progress bar.
 
 ```
 PromptFixer/
-├── .github/workflows/     ci.yml: every push runs the checks, the tests and the acceptance suite on a Windows runner
+├── .github/workflows/     ci.yml: every push runs the checks, the tests, the acceptance suite and a visual comparison
+│                          with the commit before on a Windows runner, and keeps both reports
 │                          release.yml: a pushed tag v<version> builds the installer onto a draft GitHub release;
 │                          started by hand it is a rehearsal that releases nothing
 ├── electron/
@@ -263,6 +264,29 @@ changed.
 **One screen.** Name it after `--`: `npm run visual -- fixed` checks that screen at both sizes,
 `npm run visual -- marked/small` one size of it, and `npm run visual:approve -- fixed marked`
 approves only those two. A mistyped name is an error (exit 2) that lists the screens there are.
+
+**Against a commit, with no approved pictures.** `npm run visual -- --against master` answers
+"what did my change do to the interface?". The ref (a branch, a tag, a commit) is checked out into
+`.elastishot/against/<sha>`, built there and served by its own server and stub; its screens become
+the pictures of this one run, and the working tree is then captured and compared with them. Both
+sides are captured on the same machine in the same run, so fonts and the browser cancel out and
+nothing has to be approved or committed first; the checkout, its server and its pictures are gone
+afterwards, and your approved pictures are neither read nor written. Screen names work as usual
+(`npm run visual -- --against v0.2.0 fixed/small`), and a screen the ref cannot be driven to,
+because it did not exist yet, is reported as new. The checkout sits inside the project so that it
+finds the project's `node_modules`: a ref that needs other dependencies to build or to serve, or
+that is older than the hooks `elastishot.config.mjs` drives the page by (v0.1.0 is), cannot be
+compared like this, and the runner says so. This is the form CI uses.
+
+**What CI keeps.** Every push runs three jobs on a Windows runner (`.github/workflows/ci.yml`):
+the checks and the unit and component tests; the acceptance suite; and this comparison, between the
+pushed commit and the one it was pushed onto (a pull request: its target branch). A run keeps two
+artifacts for 14 days whatever its outcome. `elastishot-report` is the comparison's report, a page
+per screen and size with the slider, the changed regions and the elements behind them, and its
+table is that job's summary page; differences do not fail the job, since a change to the interface
+is usually the point of a push, and only a comparison that could not be made is red.
+`acceptance-report` is `docs/ATDD-RESULTS.pdf` as that run printed it, with the JSON it was
+printed from, and the traceability table is that job's summary page.
 
 **Where things live.** Approved pictures are in `.elastishot/baselines/<screen>/<size>/`
 (`baseline.png` plus the element map that lets a difference be named). Every run writes a folder

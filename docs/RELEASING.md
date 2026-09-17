@@ -37,8 +37,11 @@ entry: the same check wants a dated section for exactly that version.
 4. Commit and push: `git commit -am "release: x.y.z" && git push`.
 5. Wait for CI on that commit (`gh run watch`, or the Actions tab). Every push starts it
    (`.github/workflows/ci.yml`): one job repeats the check, the typecheck, the build and the unit
-   and component tests, the other runs the acceptance suite and the traceability check, both on a
-   Windows runner. A release commit that is red there is not tagged.
+   and component tests, another runs the acceptance suite and the traceability check, and a third
+   compares every screen with the commit before, all on a Windows runner. A release commit that is
+   red there is not tagged. The third job is not red for a difference, so read its summary page:
+   it is the list of what this release does to the interface, and the `elastishot-report` artifact
+   has the pictures.
 6. Rehearse on the runner: `gh workflow run release.yml --ref master` (or the branch the release
    commit is on), then `gh run watch`. Started by hand, the workflow does everything it will do for the tag — the same check,
    `npm ci`, the typecheck, the build, the tests, the installer, the checksums, the notes — on the

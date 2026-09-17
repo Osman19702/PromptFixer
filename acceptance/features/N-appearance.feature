@@ -55,7 +55,10 @@ Feature: N — Looking the same every time
     Then it exits 1, and a report a CI job can read has been written
     When I mistype the name of a screen
     Then it exits 2 and lists the screens there are
+    When I run it against the commit I am working from instead of against approved pictures, having changed that screen
+    Then it exits 1 and the report names what I changed, although no picture was ever approved for it
     And after each run the server it started no longer answers and its temporary folders are gone
+    And the commit it compared with is no longer checked out anywhere
 
   Scenario: N7 — Pointed at the wrong place, the check says so and harms nothing
     When the check is run with no server to look at
