@@ -175,7 +175,9 @@ scheduled blindly.
 Pull requests run the unit tier, the component tier, and the acceptance tier for the API, the CLI,
 the browser and the visual check — Group N approves its own pictures at the start of the run, so it
 needs no committed baselines and passes on a fresh clone — plus the two desktop scenarios that open
-the window from source (K2 and K3), which need no installer and no model. The nightly run adds the
+the window from source (K2 and K3), which need no installer and no model. `.github/workflows/ci.yml`
+is that gate, and it answers to every push to any branch, not only to a pull request: the unit and
+component tiers in one job, the acceptance tier in another. The nightly run adds the
 desktop scenarios that need the packaged app (K1 and K4) or a loaded model (F10), and the single
 real-model smoke test on the GPU box. Packaging is verified nightly, and never from inside the synced
 project folder.

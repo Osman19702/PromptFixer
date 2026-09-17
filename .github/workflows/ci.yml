@@ -1,0 +1,100 @@
+name: CI
+
+# Every push to any branch runs this, and so does a pull request from a fork
+# (a pull request from a branch of this repository has already run as the push
+# that made it, so it is not run twice). A tag does not: a tag v<version> is a
+# release, and release.yml answers to it.
+#
+# Two jobs, side by side, both on Windows, because that is what ships and where
+# the tests have always run:
+#
+#   test        what release.yml repeats before it builds an installer: the
+#               release check (without a tag, so entries under [Unreleased] are
+#               fine), the typecheck, the build, and the unit and component
+#               tests. A few minutes; this is the quick answer.
+#   acceptance  the scenarios in acceptance/ - API, CLI, the built app in
+#               Chromium, the two desktop scenarios that open the Electron
+#               window from source, and the visual check through the real
+#               Elastishot command line - then the traceability check. Group N
+#               approves its own pictures at the start of the run, so it needs
+#               no committed baselines. The scenarios no runner can play - the
+#               2.5 GB model on a GPU, the installer on a clean machine, a
+#               network cable pulled out - are the todo rows of the suite and
+#               stay with the development machine (docs/RELEASING.md, step 3).
+#
+# `npm run visual` is not run here: its approved pictures are per machine and
+# git-ignored, so a runner has nothing to compare with.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run pointless - except on
+# master, where every commit keeps its own result.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # Before anything is installed: a version that disagrees with the lock
+      # file or the changelog is wrong on every machine.
+      - run: node scripts/check-release.mjs
+      # See release.yml: the probe for a llama.cpp binary that loads on this
+      # machine is not needed to test or to build.
+      - name: npm ci
+        env:
+          NODE_LLAMA_CPP_SKIP_DOWNLOAD: 'true'
+        run: npm ci
+      - run: npm run typecheck
+      # Before the tests: server/e2e.test.js skips "serves the built frontend" without dist/.
+      - run: npm run build
+      - run: npm test
+
+  acceptance:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: npm ci
+        env:
+          NODE_LLAMA_CPP_SKIP_DOWNLOAD: 'true'
+        run: npm ci
+      - run: npx playwright install chromium
+      # The browser, desktop and visual scenarios drive dist/.
+      - run: npm run build
+      - run: npm run test:acceptance
+      - run: npm run test:trace
+      # What Group N captured and compared: the report says which element moved.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: acceptance-visual-runs
+          path: .elastishot/runs
+          if-no-files-found: ignore
+          retention-days: 7

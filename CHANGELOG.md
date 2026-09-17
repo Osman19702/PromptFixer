@@ -58,6 +58,13 @@ minor or a breaking change while the version starts with 0, is in
   it: `package.json`, `package-lock.json` and this file have to name the same version, and no
   source file may repeat it. Started by hand, the same workflow is a rehearsal: it builds
   everything on the runner and creates no release.
+- A CI workflow. Every push to any branch, and every pull request from a fork, runs the release
+  check, the typecheck, the build and the unit and component tests in one job and the acceptance
+  suite with the traceability check in another, both on a Windows runner.
+- `scripts/capture-screenshot.mjs` also reads `SHOT_MARKS=1`: the rewrite is marked before the
+  picture is taken — one passage kept, one to change, chosen from what the model returned and
+  still in view — so the app screenshot can show the marks. `SHOT_KEEP` and `SHOT_CHANGE` name
+  the passages instead.
 
 ### Changed
 

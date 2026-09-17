@@ -25,8 +25,8 @@ entry: the same check wants a dated section for exactly that version.
    [Choosing the number](#choosing-the-number).
 3. `npm run typecheck && npm run build && npm run test:all && npm run check:release -- --tag vx.y.z`.
    `test:all` needs the build and takes a few minutes, about four of them in the acceptance
-   suite. This is the only time that suite runs for a release: the workflow does not repeat it
-   (its header says why). No automated run covers a real model either — those scenarios are the
+   suite. CI runs that suite again on the pushed commit (step 5); the Release workflow does not
+   repeat it (its header says why). No automated run covers a real model — those scenarios are the
    `todo` rows of `npm run test:trace` — so open the app (`npm run desktop:dev`) and, with the
    local model, fix one prompt, mark the rewrite and fix it again.
 
@@ -35,21 +35,26 @@ entry: the same check wants a dated section for exactly that version.
    workflow runs first. Without it, an entry added late and not moved would only be found after
    the tag is public.
 4. Commit and push: `git commit -am "release: x.y.z" && git push`.
-5. Rehearse on the runner: `gh workflow run release.yml --ref master` (or the branch the release
+5. Wait for CI on that commit (`gh run watch`, or the Actions tab). Every push starts it
+   (`.github/workflows/ci.yml`): one job repeats the check, the typecheck, the build and the unit
+   and component tests, the other runs the acceptance suite and the traceability check, both on a
+   Windows runner. A release commit that is red there is not tagged.
+6. Rehearse on the runner: `gh workflow run release.yml --ref master` (or the branch the release
    commit is on), then `gh run watch`. Started by hand, the workflow does everything it will do for the tag — the same check,
    `npm ci`, the typecheck, the build, the tests, the installer, the checksums, the notes — on the
    same Windows runner, but it looks at no release and creates none. The notes appear on the
    run's summary page, and the installer is kept for three days as the run's artifact
-   (`gh run download <run id> -n PromptFixer-vx.y.z-rehearsal`). Nothing else in this repository
-   runs on a runner, so without this step the pushed tag is the first time `npm ci`, the tests
-   and electron-builder meet one, and a failure there means moving a public tag. A patch release
+   (`gh run download <run id> -n PromptFixer-vx.y.z-rehearsal`). CI has already put `npm ci` and
+   the tests on a runner; electron-builder, the checksums and the notes are what only this
+   workflow does there, so without this step the pushed tag is the first time they meet one, and
+   a failure there means moving a public tag. A patch release
    that changes no dependency, nothing under `build` in `package.json` and nothing in the workflow
    may skip it. GitHub offers a workflow for a manual run only once the file is on the default
    branch.
-6. Tag and push the tag: `git tag -a vx.y.z -m "PromptFixer x.y.z" && git push origin vx.y.z`.
-7. Watch the Release workflow (`gh run watch`, or the Actions tab). Its first check refuses a tag
+7. Tag and push the tag: `git tag -a vx.y.z -m "PromptFixer x.y.z" && git push origin vx.y.z`.
+8. Watch the Release workflow (`gh run watch`, or the Actions tab). Its first check refuses a tag
    that does not match `package.json`; the installer build is the long part.
-8. Verify the draft. Download its three files into an empty folder and check them, then install
+9. Verify the draft. Download its three files into an empty folder and check them, then install
    that very file, open it and fix one prompt with the local model:
 
    ```bash
@@ -64,8 +69,8 @@ entry: the same check wants a dated section for exactly that version.
    workflow reads it back to tell a draft of this commit from a draft of an earlier one.
    Installing over the previous version is the upgrade everybody else will do: the library and
    the model must still be there afterwards.
-9. Publish the draft: `gh release edit vx.y.z --draft=false`, or **Publish release** on its page.
-10. Then, and only then, point the documentation at it: the link, the size and the SHA-256 in the
+10. Publish the draft: `gh release edit vx.y.z --draft=false`, or **Publish release** on its page.
+11. Then, and only then, point the documentation at it: the link, the size and the SHA-256 in the
     README's "Download (Windows)" block and in `docs/INSTALL.md`, and `docs/releases/vx.y.z.md`
     in the shape of the one before it. If that page went in with the release commit, its size
     and hash read `TBD` until now. The size is in MiB everywhere (bytes / 1,048,576, which is
@@ -130,8 +135,8 @@ different. They wait under "Unreleased" for the next one.
 A pre-release (`0.3.0-rc.1`, an installer for somebody to try before `0.3.0`) takes the same
 steps with that version everywhere: in `package.json`, as a dated `## [0.3.0-rc.1]` section, as
 the tag `v0.3.0-rc.1`. The workflow marks a version with a `-` in it as a pre-release on GitHub,
-so publishing it never makes it the "Latest" release, and step 10 is left out: the README keeps
-pointing at the last full release. To see the workflow run, a rehearsal (step 5) is enough; a
+so publishing it never makes it the "Latest" release, and step 11 is left out: the README keeps
+pointing at the last full release. To see the workflow run, a rehearsal (step 6) is enough; a
 pre-release is for handing out an installer.
 
 ## If it fails
@@ -149,7 +154,7 @@ draft.
   `npm run check:release -- --tag vx.y.z` locally. Fix them, commit, then move the tag.
 - **Something has to change** (a test that fails on the runner, a broken build): fix it on the
   branch, delete the tag locally and remotely, and tag the new commit:
-  `git tag -d vx.y.z && git push origin :refs/tags/vx.y.z`, then step 6 again. A tag may move
+  `git tag -d vx.y.z && git push origin :refs/tags/vx.y.z`, then step 7 again. A tag may move
   only while its release is unpublished. A draft that an earlier run left behind does not have
   to be deleted first: its notes name the commit it was built from, and the new run, finding
   another commit there, builds again and replaces the installer, the `.blockmap`,
@@ -158,7 +163,7 @@ draft.
 - **The draft is wrong** (the hash check fails, the installer does not start): delete the draft
   with `gh release delete vx.y.z --yes` (the tag stays), then proceed as above.
 - **The workflow cannot be used at all**: build locally (above), then create the draft by hand
-  and carry on from step 8:
+  and carry on from step 9:
 
   ```bash
   node scripts/changelog-section.mjs x.y.z --links https://github.com/Osman19702/PromptFixer/blob/vx.y.z > release/RELEASE_NOTES.md
