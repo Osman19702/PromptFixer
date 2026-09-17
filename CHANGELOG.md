@@ -8,6 +8,22 @@ minor or a breaking change while the version starts with 0, is in
 
 ## [Unreleased]
 
+### Added
+
+- `npm run visual -- --against <ref>` compares the interface with a commit instead of with
+  approved pictures: the ref is checked out into `.elastishot/against/<sha>`, built there and
+  served by its own server, its screens become the pictures of that one run, and the working tree
+  is compared with them. Nothing has to be approved or committed first, and your approved pictures
+  are neither read nor written. A screen the ref cannot be driven to is reported as new; a ref no
+  screen of which can be captured (v0.1.0, which predates the hooks the check drives the page by)
+  is an error that says so.
+- CI keeps its reports. A third job compares every screen of a pushed commit with the commit it
+  was pushed onto (a pull request: its target branch) and keeps the Elastishot report as the
+  `elastishot-report` artifact, with its table as the job's summary page; a difference does not
+  fail that job, a comparison that could not be made does. The acceptance job keeps
+  `docs/ATDD-RESULTS.pdf` as the run printed it (`acceptance-report`) and shows the traceability
+  table as its summary page. Both are kept for 14 days whatever the run's outcome.
+
 ## [0.2.0] - 2026-09-17
 
 ### Added

@@ -98,7 +98,7 @@ export async function comparePictures(name, baseline, candidate) {
  * dist/ is built already (the suite's precondition), so the build is skipped.
  * With `tmp`, its temporary folders go where the scenario can see what is left.
  */
-export async function npmRun(script, name, { screens = [], baselines, variant = '', tmp } = {}) {
+export async function npmRun(script, name, { screens = [], baselines, variant = '', tmp, flags: more = [] } = {}) {
   const [node, file, ...flags] = String(SCRIPTS[script]).split(' ')
   if (node !== 'node' || !file) throw new Error(`package.json "${script}" is not a node script: ${SCRIPTS[script]}`)
   const out = emptyFolder(name)
@@ -107,7 +107,7 @@ export async function npmRun(script, name, { screens = [], baselines, variant = 
     PROMPTFIXER_VISUAL_VARIANT: variant,
     ...(tmp ? { TMP: tmp, TEMP: tmp, TMPDIR: tmp } : {}),
   }
-  return outcome(await spawned(path.join(root, file), [...flags, '--no-build', '--out', out, ...screens], env), out)
+  return outcome(await spawned(path.join(root, file), [...flags, ...more, '--no-build', '--out', out, ...screens], env), out)
 }
 
 /** Where an approved picture lives. */

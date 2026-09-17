@@ -5,13 +5,13 @@ name: CI
 # that made it, so it is not run twice). A tag does not: a tag v<version> is a
 # release, and release.yml answers to it.
 #
-# Two jobs, side by side, both on Windows, because that is what ships and where
-# the tests have always run:
+# Three jobs, side by side, all on Windows, because that is what ships and
+# where the tests have always run:
 #
 #   test        what release.yml repeats before it builds an installer: the
 #               release check (without a tag, so entries under [Unreleased] are
 #               fine), the typecheck, the build, and the unit and component
-#               tests. A few minutes; this is the quick answer.
+#               tests. A minute or two; this is the quick answer.
 #   acceptance  the scenarios in acceptance/ - API, CLI, the built app in
 #               Chromium, the two desktop scenarios that open the Electron
 #               window from source, and the visual check through the real
@@ -21,9 +21,31 @@ name: CI
 #               2.5 GB model on a GPU, the installer on a clean machine, a
 #               network cable pulled out - are the todo rows of the suite and
 #               stay with the development machine (docs/RELEASING.md, step 3).
+#   visual      what this push did to the interface: every screen of the pushed
+#               commit against the same screen of the commit it was pushed onto
+#               (a pull request: against its target branch), with Elastishot.
+#               Both sides are built, served and captured in this one job, so
+#               fonts and the browser cancel out and no picture has to be
+#               committed. Differences do not fail the job - a change to the
+#               interface is usually the point of the push - the report does the
+#               talking; only a comparison that could not be made is red.
 #
-# `npm run visual` is not run here: its approved pictures are per machine and
-# git-ignored, so a runner has nothing to compare with.
+# What a run keeps, whatever its outcome, for 14 days:
+#
+#   acceptance-report   docs/ATDD-RESULTS.pdf as this run printed it (every
+#                       scenario, its steps and its result) and the JSON it
+#                       was printed from; the traceability table is the job's
+#                       summary page
+#   elastishot-report   the visual job's Elastishot report: a page per screen
+#                       and window size with the slider, the changed regions
+#                       and the elements behind them; its table is the job's
+#                       summary page
+#   acceptance-visual-runs   only when the acceptance job fails: what Group N
+#                       captured and compared
+#
+# Plain `npm run visual` is not run here: its approved pictures are per machine
+# and git-ignored, so a runner has nothing to compare with. `--against` is the
+# form that needs none.
 
 on:
   push:
@@ -88,8 +110,22 @@ jobs:
       - run: npx playwright install chromium
       # The browser, desktop and visual scenarios drive dist/.
       - run: npm run build
-      - run: npm run test:acceptance
-      - run: npm run test:trace
+      # The acceptance suite, with the report: test:report runs the same files
+      # as test:acceptance with the same output, prints docs/ATDD-RESULTS.pdf
+      # whatever the outcome, and exits with the test runner's code.
+      - run: npm run test:report
+      - name: Every scenario has a test (the table is this job's summary)
+        if: ${{ !cancelled() }}
+        run: node acceptance/trace.js | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: acceptance-report
+          path: |
+            docs/ATDD-RESULTS.pdf
+            acceptance/report/out
+          if-no-files-found: warn
+          retention-days: 14
       # What Group N captured and compared: the report says which element moved.
       - uses: actions/upload-artifact@v7
         if: failure()
@@ -97,4 +133,62 @@ jobs:
           name: acceptance-visual-runs
           path: .elastishot/runs
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 14
+
+  visual:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The commit to compare with has to be in the clone.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: npm ci
+        env:
+          NODE_LLAMA_CPP_SKIP_DOWNLOAD: 'true'
+        run: npm ci
+      - run: npx playwright install chromium
+      - name: The commit to compare with
+        id: base
+        env:
+          BEFORE: ${{ github.event.before }}
+          TARGET: ${{ github.base_ref }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) BASE="origin/$TARGET" ;;
+            push) BASE="$BEFORE" ;;
+            *) BASE="" ;;
+          esac
+          # The first push of a branch has forty zeros for a "before", a forced
+          # push can name a commit the clone does not have, and a run started
+          # by hand has none at all: then it is the default branch, or, on the
+          # default branch itself, the commit before this one.
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            if [ "$GITHUB_REF_NAME" = "master" ]; then BASE="HEAD~1"; else BASE="origin/master"; fi
+          fi
+          echo "comparing with $BASE ($(git rev-parse --short "$BASE^{commit}"))"
+          echo "ref=$BASE" >> "$GITHUB_OUTPUT"
+      - name: What this push did to the interface (Elastishot)
+        env:
+          BASE: ${{ steps.base.outputs.ref }}
+        run: |
+          # 0 nothing moved, 1 something did: both are an answer, and the report
+          # is the deliverable. 2 is a comparison that could not be made.
+          code=0
+          npm run visual -- --against "$BASE" || code=$?
+          if [ "$code" -ge 2 ]; then exit "$code"; fi
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: elastishot-report
+          path: .elastishot/runs
+          if-no-files-found: warn
+          retention-days: 14

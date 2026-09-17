@@ -177,7 +177,9 @@ the browser and the visual check — Group N approves its own pictures at the st
 needs no committed baselines and passes on a fresh clone — plus the two desktop scenarios that open
 the window from source (K2 and K3), which need no installer and no model. `.github/workflows/ci.yml`
 is that gate, and it answers to every push to any branch, not only to a pull request: the unit and
-component tiers in one job, the acceptance tier in another. The nightly run adds the
+component tiers in one job, the acceptance tier in another, and in a third a comparison of every
+screen with the commit the push landed on, whose Elastishot report the run keeps next to the
+acceptance results. The nightly run adds the
 desktop scenarios that need the packaged app (K1 and K4) or a loaded model (F10), and the single
 real-model smoke test on the GPU box. Packaging is verified nightly, and never from inside the synced
 project folder.
@@ -1009,12 +1011,18 @@ picture passes silently, or if approving leaves either screen still failing.
 **N6 — The one command hands back the verdict and leaves nothing running.** When the developer runs
 `npm run visual` on a screen that has not changed, then it exits 0; on a screen that has, it exits 1
 and a report a CI job can read has been written, carrying the failure and the element behind it; and
-when they mistype the name of a screen, it exits 2 and lists the screens there are. After each run
-the server the command started no longer answers and its temporary folders are gone. The command
-starts a model stand-in and a server to have something to photograph, and a wrapper like that is
-where an exit code gets swallowed and a process gets orphaned. It fails if any of the three verdicts
-comes back as another, or if a run leaves a server or a folder behind — including the run that
-never got as far as a capture.
+when they mistype the name of a screen, it exits 2 and lists the screens there are. When they run it
+against the commit they are working from instead of against approved pictures, having changed that
+screen, then it exits 1 and the report names what they changed, although no picture was ever
+approved for it: the commit is built and served apart from the working tree, and its screens are
+the pictures of that one run. This is the form the pipeline uses on every push, where there are no
+approved pictures to be had. After each run the server the command started no longer answers, its
+temporary folders are gone, and the commit it compared with is no longer checked out anywhere. The
+command starts a model stand-in and a server to have something to photograph, and a wrapper like
+that is where an exit code gets swallowed and a process gets orphaned. It fails if any of the
+verdicts comes back as another, if the comparison with a commit approves or reads anybody's
+pictures, or if a run leaves a server, a folder or a checkout behind — including the run that never
+got as far as a capture.
 
 **N7 — Pointed at the wrong place, the check says so and harms nothing.** When the check is run with
 no server to look at, then it stops with an error that says to use `npm run visual`. Given a

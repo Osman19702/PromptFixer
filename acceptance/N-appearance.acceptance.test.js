@@ -14,6 +14,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -83,7 +84,16 @@ const answers = (url) =>
     () => true,
     () => false
   )
-const leftIn = (dir) => fs.readdirSync(dir).filter((entry) => entry.startsWith('promptfixer-acc-'))
+// The harness's folders (promptfixer-acc-*) and the runner's own (promptfixer-visual-*).
+const leftIn = (dir) => fs.readdirSync(dir).filter((entry) => entry.startsWith('promptfixer-'))
+/** Commits that "--against" checked out and did not put away again. */
+const stillCheckedOut = () => {
+  const folder = path.join(root, '.elastishot', 'against')
+  const known = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: root, encoding: 'utf8' })
+  // git prints a worktree's path with forward slashes, on Windows too.
+  const listed = known.split(/\r?\n/).filter((line) => line.startsWith('worktree ') && line.includes('/.elastishot/against/'))
+  return [...(fs.existsSync(folder) ? fs.readdirSync(folder) : []), ...listed]
+}
 
 test('N1 — Every screen, captured again, matches its approved picture', async () => {
   const runs = await everyScreen('again')
@@ -248,13 +258,16 @@ test('N5 — A screen with no approved picture, or a changed look, fails the che
 
 test('N6 — The one command hands back the verdict and leaves nothing running', async () => {
   // Each run keeps its temporary files in a place of its own, so what it leaves there can be seen.
-  const places = ['clean', 'changed', 'mistyped'].map((name) => fs.mkdtempSync(path.join(tmp, `${name}-`)))
+  const places = ['clean', 'changed', 'mistyped', 'against'].map((name) => fs.mkdtempSync(path.join(tmp, `${name}-`)))
   const mine = { baselines: approved, screens: ['empty/small'] }
-  // Three runs at once: they share nothing but the approved pictures, which none of them writes.
-  const [clean, changed, mistyped] = await Promise.all([
+  // Nobody approved anything for the fourth run: the commit's own screens are its pictures, for that run only.
+  const nobodys = emptyFolder('pictures-nobody-approved')
+  // Four runs at once: they share nothing but the approved pictures, which none of them writes.
+  const [clean, changed, mistyped, against] = await Promise.all([
     npmRun('visual', 'verdict-clean', { ...mine, tmp: places[0] }),
     npmRun('visual', 'verdict-changed', { ...mine, tmp: places[1], variant: 'fix-button' }),
     npmRun('visual', 'verdict-mistyped', { ...mine, tmp: places[2], screens: ['emtpy/small'] }),
+    npmRun('visual', 'verdict-against', { baselines: nobodys, screens: ['empty/small'], tmp: places[3], variant: 'fix-button', flags: ['--against', 'HEAD'] }),
   ])
 
   assert.equal(clean.code, 0, clean.output)
@@ -270,7 +283,16 @@ test('N6 — The one command hands back the verdict and leaves nothing running',
   assert.match(mistyped.output, /unknown target "emtpy\/small"/)
   for (const screen of SCREENS) assert.ok(mistyped.output.includes(screen), `the screens there are: ${mistyped.output}`)
 
-  for (const run of [clean, changed]) {
+  // Against the commit: the restyled button is the working tree's alone, so it is what the report names.
+  assert.equal(against.code, 1, against.output)
+  assert.equal(against.pair('empty/small').status, 'failed', seen(against.pairs))
+  assert.ok(named(against.pair('empty/small')).some((locator) => FIX_BUTTON.test(locator)), `named: ${named(against.pair('empty/small')).join(' | ')}`)
+  assert.match(against.output, /== the commit: HEAD \([0-9a-f]{7}\)/, 'it says which commit it compared with')
+  // The folder it was told to keep pictures in was never even made.
+  assert.deepEqual(fs.existsSync(nobodys) ? fs.readdirSync(nobodys) : [], [], 'and it approved nothing on the way')
+  assert.deepEqual(stillCheckedOut(), [], 'the commit it built and served is put away again')
+
+  for (const run of [clean, changed, against]) {
     const served = run.pairs[0].candidate.source
     assert.match(served, /^http:\/\/127\.0\.0\.1:\d+\/$/)
     assert.equal(await answers(served), false, `${served} still answers`)
