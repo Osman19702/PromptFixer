@@ -20,14 +20,14 @@ remain available as an optional switch — but nothing requires them.
 
 ## Download (Windows)
 
-**[PromptFixer-0.1.0-win-x64.exe](https://github.com/Osman19702/PromptFixer/releases/download/v0.1.0/PromptFixer-0.1.0-win-x64.exe)**
-(339 MiB, Windows 10/11 64-bit) from the
-[v0.1.0 release](https://github.com/Osman19702/PromptFixer/releases/tag/v0.1.0). The 2.5 GB model
+**[PromptFixer-0.3.0-win-x64.exe](https://github.com/Osman19702/PromptFixer/releases/download/v0.3.0/PromptFixer-0.3.0-win-x64.exe)**
+(339.1 MiB, Windows 10/11 64-bit) from the
+[v0.3.0 release](https://github.com/Osman19702/PromptFixer/releases/tag/v0.3.0). The 2.5 GB model
 downloads on first run; after that the app works offline.
 
-- SHA-256: `4f49a75fa3b01cbf98cee56100e2afdc14b42b56b1eef3853e47afc010194c2e`, also in the release's
-  [`SHA256SUMS.txt`](https://github.com/Osman19702/PromptFixer/releases/download/v0.1.0/SHA256SUMS.txt).
-  Check it in PowerShell with `(Get-FileHash .\PromptFixer-0.1.0-win-x64.exe).Hash.ToLower()`.
+- SHA-256: `39dde4aaf5e9ac4b059d256280002211d5e78a89ffc65dc375e7965c5d71b0d7`, also in the release's
+  [`SHA256SUMS.txt`](https://github.com/Osman19702/PromptFixer/releases/download/v0.3.0/SHA256SUMS.txt).
+  Check it in PowerShell with `(Get-FileHash .\PromptFixer-0.3.0-win-x64.exe).Hash.ToLower()`.
 - The installer is not code-signed yet, so SmartScreen shows "Windows protected your PC": click
   **More info**, then **Run anyway**, once the hash matches.
 - Full guide: [docs/INSTALL.md](docs/INSTALL.md).
