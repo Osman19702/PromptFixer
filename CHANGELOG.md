@@ -8,6 +8,8 @@ minor or a breaking change while the version starts with 0, is in
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-21
+
 ### Added
 
 - `npm run visual -- --against <ref>` compares the interface with a commit instead of with
@@ -66,9 +68,12 @@ minor or a breaking change while the version starts with 0, is in
   unloaded and the memory goes back, so the app can sit open next to a browser and a test runner on
   an 8 GB laptop; the next fix loads it again. **Release model** does it at once. Set
   `PROMPTFIXER_IDLE_UNLOAD_MS=0` to keep it loaded for ever.
-- **A local fix has a time limit.** Five minutes, after which it is stopped with a message naming
-  the limit rather than holding the single model queue for the rest of the session. Generous on
-  purpose: a fix takes 15–35 s on a GPU and 30–90 s without one. `PROMPTFIXER_FIX_TIMEOUT_MS` changes it,
+- **A stalled local fix is stopped.** A generation that produces nothing for five minutes is ended
+  rather than holding the single model queue for the rest of the session. It is a stall limit, not
+  a stopwatch on the whole run: every chunk the model emits resets it, so a slow machine is never
+  cut off mid-answer. Measured on a CPU-only machine, a first fix takes about 100 s and a "fix
+  again" — which sends the whole previous rewrite back, and may be retried once — comfortably
+  exceeds five minutes while working perfectly. `PROMPTFIXER_FIX_TIMEOUT_MS` changes the limit,
   `0` removes it.
 - **Disk is checked before a download, and can be reclaimed from inside the app.** A 2.5 GB
   download that will not fit is refused in under a second, naming both numbers, instead of failing
@@ -241,6 +246,7 @@ First public release: a Windows x64 installer.
   (`npm run test:acceptance`), a traceability matrix (`npm run test:trace`) and a results report
   (`npm run test:report`).
 
-[Unreleased]: https://github.com/Osman19702/PromptFixer/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Osman19702/PromptFixer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Osman19702/PromptFixer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Osman19702/PromptFixer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Osman19702/PromptFixer/releases/tag/v0.1.0

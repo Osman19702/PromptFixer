@@ -1,7 +1,7 @@
 {
   "name": "promptfixer",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Lint, score and rewrite LLM prompts. Desktop app with a built-in local model; cloud providers optional.",
   "author": "Osman Turalioglu",

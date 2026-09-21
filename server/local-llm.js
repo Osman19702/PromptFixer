@@ -25,12 +25,19 @@ import {
 } from './models.js'
 
 /**
- * A local fix has no natural end: a wedged generation would otherwise hold the
- * single model queue for the rest of the session. Generous on purpose — a fix
- * takes 15-35 s on a GPU and 30-90 s on a CPU-only machine, so the limit only
- * ever ends a run that was never going to finish.
+/**
+ * How long a generation may produce NOTHING before it is stopped — a stall,
+ * not a stopwatch on the whole run.
+ *
+ * A total time limit cannot tell a slow machine from a wedged one, and gets
+ * that judgement wrong in the direction that hurts: measured here, a first fix
+ * takes about 100 s on a CPU-only machine and a "fix again" — which sends the
+ * whole previous rewrite back, and may be retried once — comfortably exceeds
+ * five minutes while working perfectly. Killing that is a bug; killing a run
+ * that has emitted no token for five minutes is the feature. The timer is
+ * reset by every chunk the sampler produces.
  */
-const GENERATION_TIMEOUT_MS = Number(process.env.PROMPTFIXER_FIX_TIMEOUT_MS) || 5 * 60_000
+const GENERATION_STALL_MS = Number(process.env.PROMPTFIXER_FIX_TIMEOUT_MS) || 5 * 60_000
 
 /**
  * Drop the model after this long with nothing to do, so an app left open next
@@ -480,17 +487,28 @@ export async function complete({
     // take. Kept separate afterwards so a run that ran out of time is reported
     // as that and not as "you cancelled it".
     const stop = new AbortController()
-    let timedOut = false
+    let stalled = false
     const onCallerAbort = () => stop.abort()
     signal?.addEventListener('abort', onCallerAbort, { once: true })
-    const timer =
-      GENERATION_TIMEOUT_MS > 0
-        ? setTimeout(() => {
-            timedOut = true
-            stop.abort()
-          }, GENERATION_TIMEOUT_MS)
-        : null
-    timer?.unref?.()
+
+    let timer = null
+    const armStall = () => {
+      if (!(GENERATION_STALL_MS > 0)) return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        stalled = true
+        stop.abort()
+      }, GENERATION_STALL_MS)
+      timer.unref?.()
+    }
+    // Always wrap, even when the caller wants no chunks: the timer has to see
+    // the tokens whether or not anybody else does, or a slow run that is
+    // working perfectly gets killed for taking its time.
+    const watchChunk = (chunk) => {
+      armStall()
+      onTextChunk?.(chunk)
+    }
+    armStall()
 
     try {
       const grammar = jsonSchema ? await grammarFor(jsonSchema) : undefined
@@ -500,7 +518,7 @@ export async function complete({
         temperature,
         maxTokens: maxOut,
         signal: stop.signal,
-        onTextChunk,
+        onTextChunk: watchChunk,
       })
       const elapsedMs = Date.now() - started
       const outputTokens = state.model.tokenize(text).length
@@ -516,10 +534,10 @@ export async function complete({
         usage: { inputTokens, outputTokens },
       }
     } catch (err) {
-      if (timedOut) {
+      if (stalled) {
         throw new LocalModelError(
-          `The local model did not finish within ${Math.round(GENERATION_TIMEOUT_MS / 1000)}s and was stopped. Try a shorter prompt or a smaller model tier (PROMPTFIXER_FIX_TIMEOUT_MS changes the limit).`,
-          'TIMEOUT',
+          `The local model produced nothing for ${Math.round(GENERATION_STALL_MS / 1000)}s and was stopped. A slow machine is not the cause — this only fires when generation has halted. Try a smaller model tier (PROMPTFIXER_FIX_TIMEOUT_MS changes the limit).`,
+          'STALLED',
           504
         )
       }

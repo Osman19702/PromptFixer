@@ -363,7 +363,7 @@ on how you run PromptFixer:
 | `PROMPTFIXER_DATA_DIR` | Where the prompt library is stored (see above for the defaults) |
 | `PROMPTFIXER_PRELOAD` | `1` to load the model at startup (the desktop default; `0` to load on first fix) |
 | `PROMPTFIXER_IDLE_UNLOAD_MS` | How long the model may sit unused before it is released (default 15 minutes; `0` keeps it loaded for ever) |
-| `PROMPTFIXER_FIX_TIMEOUT_MS` | How long one local fix may run before it is stopped (default 5 minutes; `0` for no limit) |
+| `PROMPTFIXER_FIX_TIMEOUT_MS` | How long a local fix may produce nothing before it is stopped (default 5 minutes; `0` for no limit). A stall, not a total time limit: a slow machine is never cut off mid-answer |
 | `DEFAULT_PROVIDER` | Provider selected on first load (default `local`) |
 | `DEFAULT_MODEL` | Force a specific model id instead of the provider's default |
 | `PORT` | Browser-mode port (default `8787`; `npm run dev` proxies to it; the desktop app picks a free one) |

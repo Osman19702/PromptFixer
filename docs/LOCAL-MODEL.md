@@ -53,9 +53,11 @@ These are two runs, in one session, on one machine, and nothing in the test suit
 app gets slower. Treat them as a starting point rather than a baseline.
 
 **The model does not stay loaded.** It is released after 15 minutes with nothing to do
-(`PROMPTFIXER_IDLE_UNLOAD_MS`), so a fix after a long gap pays the load again. A single fix is
-stopped after 5 minutes (`PROMPTFIXER_FIX_TIMEOUT_MS`) — generous enough for a machine with no
-GPU, where 90 s is normal, and short enough to end a run that was never going to finish.
+(`PROMPTFIXER_IDLE_UNLOAD_MS`), so a fix after a long gap pays the load again. A fix that has
+produced nothing for 5 minutes is stopped (`PROMPTFIXER_FIX_TIMEOUT_MS`); every chunk the model
+emits resets that timer, so it ends a halted generation and never a slow one. Measured on the
+CPU-only configuration, a first fix takes about 100 s and a "fix again" — which sends the whole
+previous rewrite back, and may be retried once — takes considerably longer than that.
 
 **A fix is not a pure function of the prompt.** Up to two rewrites from your own library are
 passed to the model as examples, so the input changes as the library grows. Time or compare runs
