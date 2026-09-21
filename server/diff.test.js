@@ -15,9 +15,13 @@ import { diffStats, diffText, diffWords } from '../src/lib/diff.ts'
 import {
   activatesEntry,
   canFix,
+  formatEta,
+  formatRate,
   localIdle,
   localTierAction,
+  promptFit,
   resultView,
+  stageLabel,
   warningHeadline,
   warningKind,
 } from '../src/lib/ui.ts'
@@ -236,4 +240,66 @@ test('styles: --text-faint meets WCAG AA (4.5:1) on every surface it is used on'
     const ratio = contrast(t['--text-faint'], t[bg])
     assert.ok(ratio >= 4.5, `--text-faint on ${bg} is ${ratio.toFixed(2)}:1, needs 4.5:1`)
   }
+})
+
+// --- waits -------------------------------------------------------------------
+
+test('stageLabel names which of the three waits this is', () => {
+  // Without it, a queued job, a loading model and the silent second attempt are
+  // the same spinner.
+  assert.equal(stageLabel(null), 'Fixing…')
+  assert.match(stageLabel({ stage: 'queued', attempt: 1, ahead: 1 }), /the job in front/)
+  assert.match(stageLabel({ stage: 'queued', attempt: 1, ahead: 3 }), /3 jobs in front/)
+  assert.match(stageLabel({ stage: 'loading', attempt: 1 }), /Loading the model/)
+  assert.match(stageLabel({ stage: 'generating', attempt: 1 }), /Writing the rewrite/)
+  assert.match(stageLabel({ stage: 'generating', attempt: 2 }), /Second attempt/)
+})
+
+test('stageLabel reads "the job" as singular when the count is missing', () => {
+  // An older server may send the stage without the count.
+  assert.match(stageLabel({ stage: 'queued', attempt: 1 }), /the job in front/)
+})
+
+test('promptFit warns before the wait, not after the model has loaded', () => {
+  const status = { inputBudgetTokens: 6080 }
+  assert.equal(promptFit('local', 100, status), null, 'a normal prompt says nothing')
+  assert.equal(promptFit('local', 5000, status), null)
+
+  const near = promptFit('local', 5800, status)
+  assert.equal(near.over, false)
+  assert.match(near.message, /Close to the local model/)
+
+  const over = promptFit('local', 9000, status)
+  assert.equal(over.over, true)
+  assert.match(over.message, /Too long for the local model/)
+  // It has to name both numbers, or there is nothing to act on.
+  assert.match(over.message, /9000/)
+  assert.match(over.message, /6080/)
+})
+
+test('promptFit stays quiet where it cannot know', () => {
+  // A cloud provider has its own, much larger limit; a server that reports no
+  // budget, or an empty editor, gives nothing to compare against.
+  assert.equal(promptFit('anthropic', 9000, { inputBudgetTokens: 6080 }), null)
+  assert.equal(promptFit('local', 9000, null), null)
+  assert.equal(promptFit('local', 9000, {}), null)
+  assert.equal(promptFit('local', 0, { inputBudgetTokens: 6080 }), null)
+  assert.equal(promptFit('local', undefined, { inputBudgetTokens: 6080 }), null)
+})
+
+test('the download reports a speed and a time, or says nothing at all', () => {
+  // Percent alone cannot answer "wait, or go and do something else?".
+  assert.equal(formatRate(12 * 1024 ** 2), '12.0 MB/s')
+  assert.equal(formatRate(300 * 1024), '300 kB/s')
+  assert.equal(formatRate(null), '')
+  assert.equal(formatRate(0), '')
+  assert.equal(formatRate(undefined), '')
+
+  assert.equal(formatEta(45), 'about 45s left')
+  assert.equal(formatEta(600), 'about 10 min left')
+  assert.equal(formatEta(3600), 'about 1h left')
+  assert.equal(formatEta(5400), 'about 1h 30m left')
+  assert.equal(formatEta(null), '')
+  assert.equal(formatEta(undefined), '')
+  assert.equal(formatEta(Infinity), '', 'an unknown rate never prints as forever')
 })

@@ -11,7 +11,36 @@
  * into prose, truncate a string, or invent a field.
  */
 
-import { MODELS, MODEL_DIR, isDownloaded, modelPath, selectedTier, catalog } from './models.js'
+import {
+  MODELS,
+  MODEL_DIR,
+  bytesOnDisk,
+  catalog,
+  deleteModel as deleteModelFiles,
+  freeSpaceBytes,
+  isDownloaded,
+  modelPath,
+  selectedTier,
+  spaceForDownload,
+} from './models.js'
+
+/**
+ * A local fix has no natural end: a wedged generation would otherwise hold the
+ * single model queue for the rest of the session. Generous on purpose — a fix
+ * takes 15-35 s on a GPU and 30-90 s on a CPU-only machine, so the limit only
+ * ever ends a run that was never going to finish.
+ */
+const GENERATION_TIMEOUT_MS = Number(process.env.PROMPTFIXER_FIX_TIMEOUT_MS) || 5 * 60_000
+
+/**
+ * Drop the model after this long with nothing to do, so an app left open next
+ * to a browser and an IDE stops holding 2.5 GB it is not using. The next fix
+ * pays the load again, which is why the default is generous. 0 disables it.
+ */
+const IDLE_UNLOAD_MS =
+  process.env.PROMPTFIXER_IDLE_UNLOAD_MS !== undefined
+    ? Number(process.env.PROMPTFIXER_IDLE_UNLOAD_MS)
+    : 15 * 60_000
 
 export class LocalModelError extends Error {
   constructor(message, code, status = 400) {
@@ -43,6 +72,13 @@ const state = {
   grammars: new Map(),
   queue: Promise.resolve(),
   lastRun: null,
+  active: 0,
+  // Download rate, smoothed over the last sample; null until two samples exist.
+  rate: { bytesPerSecond: null, at: 0, bytes: 0 },
+  // 0..1 while the model is being read into memory.
+  loadPercent: 0,
+  idleTimer: null,
+  autoUnloaded: false,
 }
 
 // --- status ------------------------------------------------------------------
@@ -59,6 +95,21 @@ export function getStatus() {
   }
 
   const total = state.progress.total || model.bytes
+  const remaining = Math.max(0, total - state.progress.downloaded)
+  const bps = state.rate.bytesPerSecond
+  // The context the model actually loaded with can be smaller than the catalog
+  // says on a VRAM-starved machine, so prefer the real one once it exists.
+  const contextSize = (loaded && state.context?.contextSize) || model.contextSize
+
+  // Built once and reused below. The UI polls this route every 1.2s during a
+  // download, and asking each tier for its size separately listed the model
+  // directory eight times per call — while the same event loop was writing the
+  // download it was reporting on.
+  const tiers = catalog().map((c) => {
+    const onDisk = bytesOnDisk(c.id)
+    return { ...c, downloaded: isDownloaded(c.id), onDisk }
+  })
+
   return {
     tier,
     model: { id: model.id, label: model.label, bytes: model.bytes, blurb: model.blurb },
@@ -71,13 +122,29 @@ export function getStatus() {
       downloaded: state.progress.downloaded,
       total,
       percent: total ? Math.min(100, Math.round((state.progress.downloaded / total) * 100)) : 0,
+      bytesPerSecond: bps,
+      // Null rather than Infinity while the rate is unknown, so the interface
+      // has one thing to test for instead of two.
+      etaSeconds: bps && bps > 0 ? Math.round(remaining / bps) : null,
     },
+    // 0..100 while phase is 'loading'.
+    loadPercent: Math.round(state.loadPercent * 100),
     gpu: state.gpu,
     device: state.device,
     error: state.error,
     lastRun: state.lastRun,
-    busy: (state.active || 0) > 0,
-    catalog: catalog().map((c) => ({ ...c, downloaded: isDownloaded(c.id) })),
+    busy: state.active > 0,
+    // How much room the prompt has once the reply is reserved, so the editor can
+    // warn before the wait instead of the model refusing after it.
+    inputBudgetTokens: outputBudget(contextSize, 2048).budget,
+    // Set when the model was dropped for being idle, so the interface can say so
+    // rather than letting the next fix look like a cold start for no reason.
+    autoUnloaded: state.autoUnloaded,
+    disk: {
+      free: freeSpaceBytes(),
+      used: tiers.reduce((n, c) => n + c.onDisk, 0),
+    },
+    catalog: tiers,
   }
 }
 
@@ -114,11 +181,26 @@ export async function startDownload(tier = state.tier) {
   if (isDownloaded(tier)) return getStatus()
 
   const spec = MODELS[tier]
+
+  // Checked before the downloader starts, so "not enough room" is an answer in
+  // under a second rather than an error an hour into a 2.5 GB transfer. Unknown
+  // free space never blocks: spaceForDownload() reports ok in that case.
+  const room = spaceForDownload(tier)
+  if (!room.ok) {
+    const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
+    throw new LocalModelError(
+      `Not enough disk space for ${spec.label}: ${gb(room.needed)} needed, ${gb(room.free)} free on the drive holding ${MODEL_DIR}. Free some space, or delete a model you are not using.`,
+      'NO_SPACE',
+      507
+    )
+  }
+
   const { createModelDownloader } = await native()
 
   state.phase = 'downloading'
   state.error = null
   state.progress = { downloaded: 0, total: spec.bytes }
+  state.rate = { bytesPerSecond: null, at: Date.now(), bytes: 0 }
   const controller = new AbortController()
   state.abort = controller
 
@@ -133,6 +215,22 @@ export async function startDownload(tier = state.tier) {
         deleteTempFileOnCancel: false, // resumable
         onProgress: ({ totalSize, downloadedSize }) => {
           state.progress = { downloaded: downloadedSize, total: totalSize || spec.bytes }
+          // Sampled over a window rather than per callback: the callback fires
+          // far too often for the quotient to be stable, and over the whole
+          // download an early stall would drag the estimate down for an hour.
+          const now = Date.now()
+          const ms = now - state.rate.at
+          if (ms >= 1000) {
+            const bytes = downloadedSize - state.rate.bytes
+            const sample = (bytes / ms) * 1000
+            const prev = state.rate.bytesPerSecond
+            state.rate = {
+              // Exponential smoothing; the first sample stands on its own.
+              bytesPerSecond: prev === null ? sample : prev * 0.7 + sample * 0.3,
+              at: now,
+              bytes: downloadedSize,
+            }
+          }
         },
       })
       await downloader.download({ signal: controller.signal })
@@ -188,15 +286,44 @@ export function finishDownload(tier, filePath) {
 function serialize(fn) {
   // `active` counts queued + running jobs; the UI reads it as `busy` to keep
   // Fix disabled after a cancel until the aborted generation has actually stopped.
-  state.active = (state.active || 0) + 1
+  state.active += 1
+  clearIdleUnload()
   const run = state.queue.then(fn, fn).finally(() => {
     state.active -= 1
+    if (state.active === 0 && state.model) armIdleUnload()
   })
   state.queue = run.catch(() => {})
   return run
 }
 
+/**
+ * Arm the idle release. Called whenever a job finishes, so the countdown always
+ * measures time since the model was last useful. unref() so a pending timer
+ * never keeps the process alive — the desktop quit handler depends on that.
+ */
+function armIdleUnload() {
+  clearIdleUnload()
+  if (!(IDLE_UNLOAD_MS > 0) || !state.model) return
+  state.idleTimer = setTimeout(() => {
+    state.idleTimer = null
+    // Only when still idle: a job that started in the meantime owns the model.
+    if (state.active > 0 || !state.model) return
+    unload()
+      .then(() => {
+        state.autoUnloaded = true
+      })
+      .catch(() => {})
+  }, IDLE_UNLOAD_MS)
+  state.idleTimer.unref?.()
+}
+
+function clearIdleUnload() {
+  if (state.idleTimer) clearTimeout(state.idleTimer)
+  state.idleTimer = null
+}
+
 async function unloadNow() {
+  clearIdleUnload()
   const { context, model } = state
   state.context = null
   state.model = null
@@ -221,11 +348,20 @@ async function loadNow(tier) {
 
   state.phase = 'loading'
   state.error = null
+  state.loadPercent = 0
+  state.autoUnloaded = false
   try {
     await unloadNow()
     const { getLlama } = await native()
     if (!state.llama) {
-      state.llama = await getLlama({ logLevel: 'error' })
+      // `build` defaults to 'auto', which on a machine with no matching
+      // prebuilt binary resolves a release from GitHub, clones llama.cpp and
+      // may fetch a toolchain — real network traffic, from an app whose whole
+      // claim is that it does not do that, with nobody having asked for it.
+      // Refuse instead: a missing binary is a clear error, not a silent
+      // download. The installer ships the binary, so this only ever fires on a
+      // platform we do not build for.
+      state.llama = await getLlama({ logLevel: 'error', build: 'never', skipDownload: true })
       state.gpu = state.llama.gpu || 'cpu'
       const names = await state.llama.getGpuDeviceNames().catch(() => [])
       state.device = names[0] || null
@@ -233,13 +369,20 @@ async function loadNow(tier) {
     state.model = await state.llama.loadModel({
       modelPath: modelPath(tier),
       gpuLayers: 'auto',
+      // Turns the 15-second bare spinner into a real bar.
+      onLoadProgress: (fraction) => {
+        state.loadPercent = Math.max(0, Math.min(1, fraction))
+      },
     })
+    // Reading the file is the long part; the context is quick but not free.
+    state.loadPercent = 1
     state.context = await state.model.createContext({
       contextSize: { max: MODELS[tier].contextSize },
     })
     state.loadedTier = tier
     state.phase = 'ready'
   } catch (err) {
+    state.loadPercent = 0
     state.phase = 'error'
     state.error = `Could not load the model: ${err.message}`
     await unloadNow()
@@ -274,12 +417,40 @@ export function outputBudget(contextSize, maxTokens, reserve = 64) {
   return { maxOut, budget: contextSize - maxOut - reserve }
 }
 
-export async function complete({ system, user, temperature = 0.3, maxTokens = 2048, jsonSchema, signal }) {
+/**
+ * `onStage` names what the caller is waiting for — 'queued', 'loading',
+ * 'generating' — so a spinner can say which of the three it is instead of
+ * looking the same for all of them. `onTextChunk` receives the raw model
+ * output as it arrives; with a grammar that is partial JSON, which is the
+ * caller's problem to parse.
+ */
+export async function complete({
+  system,
+  user,
+  temperature = 0.3,
+  maxTokens = 2048,
+  jsonSchema,
+  signal,
+  onStage,
+  onTextChunk,
+}) {
   // Capture the tier the caller asked for: another request may reselect
   // before this job reaches the front of the queue.
   const tier = state.tier
+  const stage = (name, detail) => {
+    try {
+      onStage?.(name, detail)
+    } catch {
+      /* a reporting callback must never fail the generation */
+    }
+  }
+
+  // Read before serialize() increments it, so it counts the jobs in front.
+  const ahead = state.active
+  if (ahead > 0) stage('queued', { ahead })
 
   return serialize(async () => {
+    if (!(state.model && state.context && state.loadedTier === tier)) stage('loading')
     await loadNow(tier)
     const { LlamaChatSession } = await native()
     const spec = MODELS[tier]
@@ -304,9 +475,33 @@ export async function complete({ system, user, temperature = 0.3, maxTokens = 20
     const sequence = state.context.getSequence()
     const session = new LlamaChatSession({ contextSequence: sequence, systemPrompt: system })
     const started = Date.now()
+
+    // The caller's signal and the time limit, as one signal the sampler can
+    // take. Kept separate afterwards so a run that ran out of time is reported
+    // as that and not as "you cancelled it".
+    const stop = new AbortController()
+    let timedOut = false
+    const onCallerAbort = () => stop.abort()
+    signal?.addEventListener('abort', onCallerAbort, { once: true })
+    const timer =
+      GENERATION_TIMEOUT_MS > 0
+        ? setTimeout(() => {
+            timedOut = true
+            stop.abort()
+          }, GENERATION_TIMEOUT_MS)
+        : null
+    timer?.unref?.()
+
     try {
       const grammar = jsonSchema ? await grammarFor(jsonSchema) : undefined
-      const text = await session.prompt(user, { grammar, temperature, maxTokens: maxOut, signal })
+      stage('generating')
+      const text = await session.prompt(user, {
+        grammar,
+        temperature,
+        maxTokens: maxOut,
+        signal: stop.signal,
+        onTextChunk,
+      })
       const elapsedMs = Date.now() - started
       const outputTokens = state.model.tokenize(text).length
       state.lastRun = {
@@ -320,7 +515,18 @@ export async function complete({ system, user, temperature = 0.3, maxTokens = 20
         model: spec.label,
         usage: { inputTokens, outputTokens },
       }
+    } catch (err) {
+      if (timedOut) {
+        throw new LocalModelError(
+          `The local model did not finish within ${Math.round(GENERATION_TIMEOUT_MS / 1000)}s and was stopped. Try a shorter prompt or a smaller model tier (PROMPTFIXER_FIX_TIMEOUT_MS changes the limit).`,
+          'TIMEOUT',
+          504
+        )
+      }
+      throw err
     } finally {
+      if (timer) clearTimeout(timer)
+      signal?.removeEventListener('abort', onCallerAbort)
       // Synchronous in node-llama-cpp; a thrown error here would mask the result.
       try {
         session.dispose({ disposeSequence: true })
@@ -329,6 +535,33 @@ export async function complete({ system, user, temperature = 0.3, maxTokens = 20
       }
     }
   })
+}
+
+/**
+ * Delete a tier's files, unloading it first when it is the one in memory —
+ * llama.cpp maps the file, so deleting it underneath a loaded model is a crash
+ * on some platforms and a silent corruption on others.
+ */
+export async function removeModel(tier) {
+  if (!MODELS[tier]) throw new LocalModelError(`Unknown model tier "${tier}".`, 'BAD_TIER')
+  if (state.phase === 'downloading' && tier === state.tier) {
+    throw new LocalModelError(
+      `${MODELS[tier].label} is downloading. Pause the download before deleting it.`,
+      'DOWNLOAD_BUSY',
+      409
+    )
+  }
+  if (state.loadedTier === tier) await unload()
+  try {
+    const result = deleteModelFiles(tier)
+    if (tier === state.tier && state.phase === 'error') {
+      state.phase = 'idle'
+      state.error = null
+    }
+    return { ...result, status: getStatus() }
+  } catch (err) {
+    throw new LocalModelError(err.message, 'DELETE_FAILED', 500)
+  }
 }
 
 /** Warm the model in the background so the first fix is not the slow one. */

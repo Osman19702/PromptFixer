@@ -1,7 +1,9 @@
 # PromptFixer
 
 A desktop app that lints, scores and rewrites LLM prompts — with a **built-in local model**, so it
-works offline and nothing you type leaves your machine.
+works offline and nothing you type leaves your machine. That last claim is checked on every push,
+not just asserted: see [docs/PRIVACY.md](docs/PRIVACY.md) for what does and does not leave, and how
+the check works.
 
 Paste a prompt. It's scored instantly against ~30 prompt-engineering rules. Press **Fix prompt**
 and the local model rewrites it; the rewrite is re-scored so you can see whether it actually got
@@ -101,6 +103,7 @@ PromptFixer/
 │   ├── RELEASING.md       Release checklist: changelog, version bump, tag, the Release workflow, verifying the draft
 │   ├── releases/          The release page of each version: download, hash, what is new
 │   ├── ATDD.md            Acceptance test-driven development: strategy and the acceptance scenarios
+│   ├── PRIVACY.md         What does and does not leave the machine, and how scenario F11 checks it
 │   └── LOCAL-MODEL.md     Model choice, measured performance, and the train/fine-tune analysis
 ├── dist/                  Built frontend (npm run build) — served by the server
 ├── elastishot.config.mjs  Visual check targets: seven screens, each at two window sizes
@@ -140,8 +143,11 @@ Or pick a tier from the model dropdown in the app (it shows which are downloaded
 
 **GPU** is detected automatically: CUDA, Vulkan or Metal, with a CPU fallback. On the development
 machine (GTX 1660 Ti, Vulkan) the 4B model does ~21 tokens/s — a typical fix takes 15–35 s, plus
-~15 s to load the model the first time. Output is grammar-constrained to the result schema, so
-the small model can't produce malformed JSON.
+~15 s to load the model the first time, which the app now shows as a real progress bar. The
+rewrite is streamed into the Fixed tab as the model writes it, so the wait is readable rather
+than blank, and the model is released again after 15 minutes with nothing to do (or at once,
+with **Release model**). Output is grammar-constrained to the result schema, so the small model
+can't produce malformed JSON.
 
 Why this model, what it measured, and whether it's worth fine-tuning a smaller one for this job:
 **[docs/LOCAL-MODEL.md](docs/LOCAL-MODEL.md)**. Short version: don't train; if you ever must,
@@ -356,6 +362,8 @@ on how you run PromptFixer:
 | `PROMPTFIXER_MODEL_DIR` | Where model files are stored (default `~/.promptfixer/models`) |
 | `PROMPTFIXER_DATA_DIR` | Where the prompt library is stored (see above for the defaults) |
 | `PROMPTFIXER_PRELOAD` | `1` to load the model at startup (the desktop default; `0` to load on first fix) |
+| `PROMPTFIXER_IDLE_UNLOAD_MS` | How long the model may sit unused before it is released (default 15 minutes; `0` keeps it loaded for ever) |
+| `PROMPTFIXER_FIX_TIMEOUT_MS` | How long one local fix may run before it is stopped (default 5 minutes; `0` for no limit) |
 | `DEFAULT_PROVIDER` | Provider selected on first load (default `local`) |
 | `DEFAULT_MODEL` | Force a specific model id instead of the provider's default |
 | `PORT` | Browser-mode port (default `8787`; `npm run dev` proxies to it; the desktop app picks a free one) |
@@ -379,6 +387,25 @@ prompt
 The linter runs first and its findings go into the rewrite prompt, so the model fixes the same
 problems the UI shows you. The rewrite is re-linted with identical rules, which is what makes the
 before/after comparison meaningful.
+
+### Repeatable runs
+
+Two rewrites of the same prompt, with the same settings, are not guaranteed to match — and the
+reason is not the temperature. Before each fix the app looks through your saved library and passes
+the model up to two of your own earlier rewrites as examples, so the rewrites you keep teach it
+what "enough change" looks like for you. That is the point of the feature, but it means the input
+to the model changes as your library grows.
+
+For a run you intend to compare against another — measuring a rule change, timing the model,
+checking whether a prompt got better — remove that variable first:
+
+- Turn off **Use my library as examples**, or
+- Start from an empty library (`DELETE /api/library/all`, or Clear in the Library panel).
+
+The result line says `learned from N saved example(s)` whenever examples were used, and
+`meta.examplesUsed` carries the same number, so you can tell after the fact which runs are
+comparable. Everything else about a fix is already fixed: the same lint options score the prompt
+before and after, and a retry sees the same examples the first attempt did.
 
 ## Rewrite strength, and the guard behind it
 
@@ -466,6 +493,13 @@ place, whatever that original happens to contain.
 - **Use my library as examples.** On by default. Each fix shows the model up to two of your own
   saved rewrites that resemble the current prompt, so the amount and style of change match what
   you kept before. Turn it off in the option toggles; the result line says when examples were used.
+  Because the examples come from your library, they change as it grows — see
+  [Repeatable runs](#repeatable-runs) before comparing one run against another.
+- **Release the model.** When the local model is loaded, the row under the provider selectors shows
+  what is on disk and offers **Release model**, which gives the memory back at once; the next fix
+  loads it again. The same row deletes a downloaded model, part-finished downloads included, so the
+  disk can be reclaimed without going near `~/.promptfixer/models`. Left alone, the model is
+  released after 15 minutes of doing nothing.
 
 ## Troubleshooting
 
@@ -520,6 +554,12 @@ place, whatever that original happens to contain.
 
 ## Limits
 
-- Prompts are capped at 60,000 characters (cloud) or the model's context (local).
+- Prompts are capped at 60,000 characters (cloud) or the model's context (local). The editor warns
+  as soon as its estimate passes what the local model can take, rather than letting the model
+  refuse once it has loaded.
 - The library keeps the 500 most recent entries.
-- Provider requests time out after 120 s.
+- Provider requests time out after 120 s. A local fix is stopped after 5 minutes
+  (`PROMPTFIXER_FIX_TIMEOUT_MS`).
+- One model job runs at a time. A second fix waits for the first, and the interface says so.
+- The local model is released after 15 minutes with nothing to do
+  (`PROMPTFIXER_IDLE_UNLOAD_MS`); the next fix loads it again.

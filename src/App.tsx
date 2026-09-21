@@ -12,6 +12,8 @@ import {
   canRefine as refineAllowed,
   EMPTY_HISTORY,
   feedbackPayload,
+  formatEta,
+  formatRate,
   historyCurrent,
   historyDeselect,
   historyNav,
@@ -21,14 +23,16 @@ import {
   localIdle,
   localTierAction,
   marksAfterSelect,
+  promptFit,
   readExamples,
   refinedNote,
   resultView,
   shownMarks,
+  stageLabel,
   undoAvailable,
   warningHeadline,
 } from './lib/ui'
-import type { MarkedResult, UndoApply } from './lib/ui'
+import type { FixStage, MarkedResult, UndoApply } from './lib/ui'
 import type { Analysis, AppConfig, ExamplePrompt, FixOptions, LibraryEntry, LocalStatus } from './types'
 
 const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1)
@@ -91,6 +95,10 @@ export default function App() {
 
   const [tab, setTab] = useState<Tab>('issues')
   const [fixing, setFixing] = useState(false)
+  // What the fix in flight is waiting for, and the rewrite as it arrives. Both
+  // live only for the length of one request.
+  const [stage, setStage] = useState<FixStage | null>(null)
+  const [streamText, setStreamText] = useState('')
   // True while the fix in flight is "Fix again with my marks", so its button shows the spinner.
   const [refining, setRefining] = useState(false)
   // Set by Cancel on the local provider and cleared once /api/local/status says
@@ -289,6 +297,13 @@ export default function App() {
   const marks = shownMarks(marked, view.active)
   useEffect(() => setMarked((m) => marksAfterSelect(m, result)), [result])
 
+  // Whether the prompt still fits the local model, from the editor's own
+  // estimate against the room the server reports.
+  const fit = useMemo(
+    () => promptFit(provider, analysis?.stats.estimatedTokens, localStatus),
+    [provider, analysis, localStatus]
+  )
+
   // The button and the keyboard shortcut share this gate.
   const canFix = fixAllowed({ prompt, model, provider, fixing, cancelling, localStatus })
   // A refine is measured against the marked result's original, not the editor.
@@ -310,9 +325,31 @@ export default function App() {
 
       setFixing(true)
       setRefining(refine)
+      setStage(null)
+      setStreamText('')
       setError(null)
       try {
-        const res = await api.fix(payload, controller.signal)
+        const res = await api.fixStream(
+          payload,
+          (event) => {
+            if (event.type === 'stage') {
+              setStage({ stage: event.stage, attempt: event.attempt, ahead: event.ahead })
+            } else if (event.type === 'attempt') {
+              // A retry writes a new rewrite from scratch; showing it appended
+              // to the abandoned one would read as the model talking to itself.
+              if (event.attempt > 1) {
+                setStreamText('')
+                // The model is loaded and the queue is ours by now, so name the
+                // retry at once rather than leaving the first attempt's line up
+                // until the next stage event arrives.
+                setStage({ stage: 'generating', attempt: event.attempt })
+              }
+            } else if (event.type === 'delta') {
+              setStreamText((t) => t + event.text)
+            }
+          },
+          controller.signal
+        )
         setHistory((h) => historyPush(h, res))
         // A refine can start from a pinned or re-shown result while the editor
         // holds something else; without the pin its own result would hide at once.
@@ -376,6 +413,32 @@ export default function App() {
     // The server aborts the generation when the request closes; hold the Fix
     // button until status confirms it is idle rather than queue behind it.
     if (provider === 'local') setCancelling(true)
+  }
+
+  // Give the memory back without closing the app. The server can already do
+  // this; until now nothing on screen asked it to.
+  const releaseModel = async () => {
+    try {
+      setLocalStatus(await api.local.unload())
+      setLocalTick((t) => t + 1)
+      toast('Model released. The next fix loads it again.')
+    } catch (err) {
+      toast((err as Error).message, 'error')
+    }
+  }
+
+  // Reclaim the disk from here rather than by hunting through a hidden folder.
+  const deleteModel = async (tier: string, label: string, bytes: number) => {
+    const size = bytes ? ` (${gb(bytes)} GB)` : ''
+    if (!window.confirm(`Delete ${label}${size}? You can download it again later.`)) return
+    try {
+      const { freed, status } = await api.local.remove(tier)
+      setLocalStatus(status)
+      setLocalTick((t) => t + 1)
+      toast(freed ? `Deleted ${label} — ${gb(freed)} GB freed.` : `Nothing of ${label} was on disk.`)
+    } catch (err) {
+      toast((err as Error).message, 'error')
+    }
   }
 
   const copy = async (text: string, label = 'Copied') => {
@@ -513,6 +576,13 @@ export default function App() {
         <div className="brand">
           <span className="mark">P</span>
           PromptFixer
+          {config.version && (
+            // Beside the name so a bug report can name the build without
+            // hunting for it. Selectable, because that is how it gets copied.
+            <span className="version" data-testid="app-version" title={`PromptFixer ${config.version}`}>
+              v{config.version}
+            </span>
+          )}
           <small>lint · score · rewrite</small>
         </div>
 
@@ -680,6 +750,16 @@ export default function App() {
               )}
             </div>
 
+            {/* Said here, while typing, rather than by the model refusing after
+                it has loaded and counted — the same answer half a minute later.
+                A warning and not a block: the estimate is four characters to
+                the token, and the real budget moves with the loaded context. */}
+            {fit && (
+              <div className={`fit-note ${fit.over ? 'over' : ''}`} data-testid="prompt-fit">
+                {fit.message}
+              </div>
+            )}
+
             <div className="presets">
               <div className="field">
                 <label htmlFor="intent">Task type</label>
@@ -798,6 +878,14 @@ export default function App() {
                 <button className="btn" onClick={cancelFix}>
                   Cancel
                 </button>
+              )}
+              {/* Three quite different waits hide behind one spinner — a job
+                  queued behind another, the model loading, and the silent
+                  second attempt after a failed quality check. Name which. */}
+              {fixing && tab !== 'fixed' && (
+                <span className="stage-line" data-testid="fix-stage" aria-live="polite">
+                  {stageLabel(stage)}
+                </span>
               )}
             </div>
           </div>
@@ -935,6 +1023,14 @@ export default function App() {
                           <span>
                             {gb(localStatus.progress.downloaded)} / {gb(localStatus.progress.total)} GB
                           </span>
+                          {/* Percent alone cannot answer "should I wait or go
+                              and do something else?" on a slow connection. */}
+                          {formatRate(localStatus.progress.bytesPerSecond) && (
+                            <span>{formatRate(localStatus.progress.bytesPerSecond)}</span>
+                          )}
+                          {formatEta(localStatus.progress.etaSeconds) && (
+                            <span>{formatEta(localStatus.progress.etaSeconds)}</span>
+                          )}
                         </span>
                         <button
                           className="btn ghost sm"
@@ -952,8 +1048,12 @@ export default function App() {
                   )}
                   {localStatus.phase === 'downloaded' && (
                     <>
-                      <strong>{localStatus.model.label} is on disk</strong>
-                      It loads into memory on your first fix — a few seconds — and stays loaded.
+                      <strong>
+                        {localStatus.model.label} {localStatus.autoUnloaded ? 'was released' : 'is on disk'}
+                      </strong>
+                      {localStatus.autoUnloaded
+                        ? 'It had nothing to do for a while, so the memory went back. Your next fix loads it again — a few seconds.'
+                        : 'It loads into memory on your first fix — a few seconds — and is released again after a spell with nothing to do.'}
                       <div className="actions">
                         <button
                           className="btn sm"
@@ -973,8 +1073,17 @@ export default function App() {
                   {localStatus.phase === 'loading' && (
                     <>
                       <strong>Loading {localStatus.model.label} into memory…</strong>
+                      {/* About fifteen seconds of bare spinner, every session,
+                          was the app's first impression. The loader reports
+                          progress, so show it rather than a guessed countdown. */}
+                      <div className="progress">
+                        <div className="bar" style={{ width: `${localStatus.loadPercent ?? 0}%` }} />
+                      </div>
                       <div className="actions">
-                        <span className="spinner dim" /> Detecting GPU and allocating context.
+                        <span className="metastrip">
+                          <b>{localStatus.loadPercent ?? 0}%</b>
+                          <span>Reading the model and allocating context.</span>
+                        </span>
                       </div>
                     </>
                   )}
@@ -998,6 +1107,46 @@ export default function App() {
                     </>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Holding the model and holding the disk are the two ways this app
+                costs a tester something while they are not using it. Both are
+                now visible, and both can be given back from here. */}
+            {provider === 'local' && localStatus && (localStatus.disk?.used ?? 0) > 0 && (
+              <div className="disk-row" data-testid="model-disk">
+                <span className="metastrip">
+                  <span>
+                    models on disk <b>{gb(localStatus.disk?.used ?? 0)} GB</b>
+                  </span>
+                  {localStatus.disk?.free != null && <span>{gb(localStatus.disk.free)} GB free</span>}
+                  {localStatus.loaded && <span>loaded in memory</span>}
+                </span>
+                <span className="disk-actions">
+                  {localStatus.loaded && (
+                    <button
+                      className="btn ghost sm"
+                      onClick={releaseModel}
+                      disabled={fixing || localStatus.busy}
+                      title="Free the memory now. The next fix loads the model again."
+                    >
+                      Release model
+                    </button>
+                  )}
+                  {(localStatus.catalog ?? [])
+                    .filter((c) => (c.onDisk ?? 0) > 0)
+                    .map((c) => (
+                      <button
+                        key={c.id}
+                        className="btn ghost sm"
+                        onClick={() => deleteModel(c.id, c.label, c.onDisk ?? 0)}
+                        disabled={fixing || localStatus.phase === 'downloading'}
+                        title={`Delete ${c.label} and reclaim ${gb(c.onDisk ?? 0)} GB`}
+                      >
+                        Delete {c.label} ({gb(c.onDisk ?? 0)} GB)
+                      </button>
+                    ))}
+                </span>
               </div>
             )}
 
@@ -1078,7 +1227,34 @@ export default function App() {
                 </div>
               ))}
 
-            {tab === 'fixed' && view.edited && !active && editedNotice}
+            {/* The longest wait in the app used to be a blank one. The rewrite
+                is the first field the model writes, so it can be read while the
+                rest of the reply is still arriving — and abandoned early when
+                it is obviously going the wrong way. It is deliberately plain
+                text: scores, diff and marks need the finished result. */}
+            {tab === 'fixed' && fixing && (
+              <div className="streaming" data-testid="streaming-rewrite">
+                <div className="streaming-head">
+                  <span className="spinner dim" /> {stageLabel(stage)}
+                </div>
+                {streamText ? (
+                  <pre className="streaming-body">
+                    {streamText}
+                    <span className="caret" aria-hidden="true" />
+                  </pre>
+                ) : (
+                  <p className="streaming-wait">
+                    The rewrite appears here as the model writes it.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {tab === 'fixed' && !fixing && view.edited && !active && editedNotice}
+            {/* The result below stays mounted through a fix. It holds the focus
+                target after a refine and the marks made on it, and unmounting it
+                for the length of a request drops both. The streaming panel above
+                is the new rewrite; this is still the old one until it lands. */}
             {tab === 'fixed' &&
               (active ? (
                 <>
@@ -1137,7 +1313,9 @@ export default function App() {
                     onRefine={runRefine}
                   />
                 </>
-              ) : view.edited ? null : (
+              ) : view.edited || fixing ? null : (
+                // While a fix runs the streaming panel above is the answer to
+                // "press Fix prompt", so the invitation would be stale advice.
                 <div className="empty">
                   <div className="big">✦</div>
                   <h3>No rewrite yet</h3>

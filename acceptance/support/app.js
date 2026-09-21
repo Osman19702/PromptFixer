@@ -13,10 +13,13 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import { blankedProxyEnv, readAttempts } from './netwatch.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const SERVER = path.join(__dirname, '..', '..', 'server', 'index.js')
+const NETWATCH = pathToFileURL(path.join(__dirname, 'netwatch.mjs')).href
 
 export const CANARY_KEY = 'canary-compatible-key-7f3a'
 
@@ -28,13 +31,19 @@ export const CANARY_KEY = 'canary-compatible-key-7f3a'
 export const MODEL_DIR_PREFIX = 'promptfixer-acc-models-'
 
 /**
- * @param stub   The stub provider from stub-provider.js, or omitted for a
- *               server with no provider configured at all.
- * @param env    Overrides for the server's environment.
+ * @param stub    The stub provider from stub-provider.js, or omitted for a
+ *                server with no provider configured at all.
+ * @param env     Overrides for the server's environment.
+ * @param netwatch true to record every address the server tries to reach that
+ *                is not this machine; read them back with app.netAttempts().
  */
-export async function startApp({ stub, env = {} } = {}) {
+export async function startApp({ stub, env = {}, netwatch = false } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfixer-acc-data-'))
   const modelDir = fs.mkdtempSync(path.join(os.tmpdir(), MODEL_DIR_PREFIX))
+  // Written by the child, read by the test; outside both temp dirs above so
+  // cleanUp() cannot remove the evidence before a failure is reported.
+  const netLog = netwatch ? path.join(os.tmpdir(), `promptfixer-acc-net-${process.pid}-${Date.now()}.jsonl`) : null
+  if (netLog) fs.writeFileSync(netLog, '')
 
   const childEnv = {
     ...process.env,
@@ -50,11 +59,25 @@ export async function startApp({ stub, env = {} } = {}) {
     COMPATIBLE_LABEL: '',
     DEFAULT_PROVIDER: '',
     DEFAULT_MODEL: '',
+    // A proxy would route every request through loopback, so a watched run
+    // would see only 127.0.0.1 and call it clean. Blank them for every server
+    // under test, not just watched ones, so the two behave the same. The list
+    // is the watcher's own, so a variable can never be checked but not blanked.
+    ...blankedProxyEnv(),
     PROMPTFIXER_MODEL: '',
     PROMPTFIXER_PRELOAD: '0',
     PROMPTFIXER_DESKTOP: '0',
     PROMPTFIXER_MODEL_DIR: modelDir,
     PROMPTFIXER_DATA_DIR: dataDir,
+    ...(netLog
+      ? {
+          PROMPTFIXER_NETWATCH_LOG: netLog,
+          // Through the environment rather than argv: a worker created with
+          // `execArgv: []` and a spawned node child both escape a command-line
+          // --import, and both inherit NODE_OPTIONS.
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ` : ''}--import ${NETWATCH}`,
+        }
+      : {}),
     ...(stub
       ? {
           COMPATIBLE_BASE_URL: stub.url,
@@ -82,6 +105,7 @@ export async function startApp({ stub, env = {} } = {}) {
       // Windows can still hold a just-killed child's files open for a moment.
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
+    if (netLog) fs.rmSync(netLog, { force: true, maxRetries: 10, retryDelay: 100 })
   }
 
   await new Promise((resolve, reject) => {
@@ -146,6 +170,35 @@ export async function startApp({ stub, env = {} } = {}) {
     base,
     dataDir,
     modelDir,
+    netLog,
+    /**
+     * Every address this server tried to reach that is not this machine, as
+     * recorded so far. Empty is the claim holding. Prefer drain() at the end of
+     * a scenario: this is a snapshot mid-flight.
+     */
+    netAttempts: () => (netLog ? readAttempts(netLog) : []),
+    /**
+     * Stop the server and return everything it recorded over its whole life.
+     *
+     * Reading the log while the server is still running misses anything
+     * deferred — a timer that has not fired, a flush queued behind the last
+     * request — and stop() then deletes the log, so a late attempt would never
+     * be seen by anyone. So: idle first, let deferred work run, end the child,
+     * wait for it to actually be gone, and only then read.
+     *
+     * Nothing is lost by ending the child hard: the watcher appends each
+     * attempt synchronously as it happens and never flushes at exit.
+     */
+    drain: async ({ idleMs = 750 } = {}) => {
+      await new Promise((resolve) => setTimeout(resolve, idleMs))
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        await new Promise((resolve) => {
+          child.once('exit', resolve)
+          child.kill()
+        })
+      }
+      return netLog ? readAttempts(netLog) : []
+    },
     libraryFile: path.join(dataDir, 'library.json'),
     raw,
     req,

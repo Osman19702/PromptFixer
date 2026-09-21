@@ -601,6 +601,71 @@ const OUTPUT_CONTRACT = `Return ONE JSON object and nothing else. No markdown fe
 }`
 
 /**
+ * The decoded value of a top-level string field in JSON that is still being
+ * written. The grammar emits OUTPUT_SCHEMA's properties in order and
+ * `fixedPrompt` is the first, so this turns a half-finished reply into the
+ * rewrite so far — which is what the user is waiting to read.
+ *
+ * Returns null until the opening quote has arrived, then `{ text, complete }`.
+ * An escape split across two chunks ends the scan rather than leaking a stray
+ * character into the text; the next chunk carries it whole.
+ *
+ * @param {string} raw  the model output so far
+ * @param {string} key  the field name
+ */
+export function partialStringField(raw, key) {
+  const text = String(raw ?? '')
+  const marker = `"${key}"`
+  const at = text.indexOf(marker)
+  if (at === -1) return null
+
+  let i = at + marker.length
+  while (i < text.length && /\s/.test(text[i])) i++
+  if (text[i] !== ':') return null
+  i++
+  while (i < text.length && /\s/.test(text[i])) i++
+  if (text[i] !== '"') return null
+  i++
+
+  const SIMPLE = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' }
+  let out = ''
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === '\\') {
+      const esc = text[i + 1]
+      // A trailing backslash is half an escape: stop here rather than show the
+      // user a stray character; the next chunk brings the pair whole.
+      if (esc === undefined) break
+      if (esc === 'u') {
+        const hex = text.slice(i + 2, i + 6)
+        if (hex.length < 4) break
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) return { text: out, complete: false }
+        out += String.fromCharCode(parseInt(hex, 16))
+        i += 6
+        continue
+      }
+      // Not a JSON escape at all: stop cleanly instead of guessing.
+      if (!(esc in SIMPLE)) return { text: out, complete: false }
+      out += SIMPLE[esc]
+      i += 2
+      continue
+    }
+    if (ch === '"') return { text: out, complete: true }
+    out += ch
+    i++
+  }
+  return { text: out, complete: false }
+}
+
+/**
+ * The field the fix route reads out of a reply that is still arriving. The
+ * grammar emits OUTPUT_SCHEMA's properties in order, so this only works while
+ * it is the FIRST property — which stream.test.js asserts, because reordering
+ * the schema would otherwise turn streaming off with every test still green.
+ */
+export const STREAMED_FIELD = 'fixedPrompt'
+
+/**
  * The same contract as a JSON schema. The local provider compiles this to a
  * GBNF grammar so the model physically cannot emit anything else; cloud
  * providers ignore it and rely on the prose contract above.

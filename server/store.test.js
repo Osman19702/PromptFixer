@@ -281,3 +281,75 @@ test('save() gives up on a library.json that stays held: the error, no temp file
     [later.id, earlier.id]
   )
 })
+
+// --- which build produced an entry -------------------------------------------
+
+test('a saved entry records the build that produced it', async () => {
+  await store.clear()
+  const { VERSION } = await import('./version.js')
+  const saved = await store.save({ original: 'a prompt this build rewrote' })
+  assert.equal(saved.appVersion, VERSION)
+  assert.equal((await store.list())[0].appVersion, VERSION)
+})
+
+test('an imported entry keeps the build that produced it, not the one importing', async () => {
+  // The entry's provenance belongs to whoever made it. Restating it as ours
+  // would be a guess, and the field exists precisely to avoid guessing.
+  await store.clear()
+  const result = await store.importEntries([
+    {
+      id: 'from-an-older-build',
+      original: 'written elsewhere',
+      fixed: 'rewritten elsewhere',
+      appVersion: '0.1.0',
+      createdAt: '2026-09-04T18:21:01.766Z',
+    },
+  ])
+  assert.equal(result.imported, 1)
+  assert.equal((await store.list())[0].appVersion, '0.1.0')
+})
+
+test('an entry with no version stays unknown rather than being stamped', async () => {
+  // Every entry saved before this field existed is in exactly this position.
+  // Writing today's version into one would assert that this build produced a
+  // result it never saw — which is the failure the field is meant to prevent.
+  await store.clear()
+  await store.importEntries([
+    { id: 'no-version-recorded', original: 'older entry', fixed: 'older rewrite' },
+  ])
+  const [entry] = await store.list()
+  assert.equal(entry.appVersion, null, 'unknown, not guessed')
+})
+
+test('a hand-written library.json without the field reads back as unknown', async () => {
+  await store.clear()
+  fs.writeFileSync(
+    FILE,
+    JSON.stringify({
+      version: 1,
+      entries: [
+        {
+          id: 'hand-written',
+          title: 'hand written',
+          original: 'x',
+          fixed: 'y',
+          createdAt: '2026-09-06T09:08:33.362Z',
+          updatedAt: '2026-09-06T09:08:33.362Z',
+        },
+      ],
+    })
+  )
+  const [entry] = await store.list()
+  assert.equal(entry.appVersion ?? null, null)
+})
+
+test('re-saving an entry records the build that rewrote it', async () => {
+  // updatedAt and appVersion answer the same question about the same write.
+  await store.clear()
+  const { VERSION } = await import('./version.js')
+  await store.importEntries([
+    { id: 'came-from-0-1-0', original: 'old', fixed: 'old rewrite', appVersion: '0.1.0' },
+  ])
+  const updated = await store.save({ id: 'came-from-0-1-0', original: 'old', fixed: 'rewritten by this build' })
+  assert.equal(updated.appVersion, VERSION)
+})

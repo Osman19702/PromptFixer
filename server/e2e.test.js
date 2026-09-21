@@ -12,6 +12,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, before, test } from 'node:test'
 
+import { parseNdjson } from '../acceptance/support/netwatch.mjs'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // Ports are OS-assigned at runtime so two test runs (or a dev server) never collide.
 let stubPort = 0
@@ -373,10 +375,19 @@ function startServer() {
   })
 }
 
+/**
+ * `connection: close` on purpose. fetch pools idle connections and Node closes
+ * an idle one after 5s, so a request that lands in that window is reset —
+ * surfacing as an ECONNRESET that has nothing to do with the route under test.
+ * It only bites when a gap between two requests happens to straddle the
+ * timeout, which made it invisible until the suite grew long enough. These
+ * tests assert what the routes return, not connection reuse, so the pool is
+ * the wrong thing to be exposed to here.
+ */
 const req = async (method, path_, body) => {
   const res = await fetch(BASE + path_, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', connection: 'close' },
     body: body ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
@@ -412,6 +423,16 @@ test('GET /api/health reports the version in package.json, not a copy of it', as
   const { status, body } = await req('GET', '/api/health')
   assert.equal(status, 200)
   assert.deepEqual(body, { ok: true, version: pkg.version })
+})
+
+test('GET /api/config carries the running version, and it is the one /api/health reports', async () => {
+  // The interface shows this beside the app name, so the two must never be
+  // able to disagree: both read package.json, which is the one place the
+  // version is written down (npm run check:release enforces that).
+  const config = await req('GET', '/api/config')
+  const health = await req('GET', '/api/health')
+  assert.match(config.body.version, /^\d+\.\d+\.\d+/, 'a semantic version, not a placeholder')
+  assert.equal(config.body.version, health.body.version)
 })
 
 test('GET /api/config lists providers and presets', async () => {
@@ -2479,4 +2500,124 @@ test('the acceptance stub reads the marks back out of the message, and null when
   } finally {
     await acceptanceStub.close()
   }
+})
+
+// --- streaming ---------------------------------------------------------------
+// The fix route reports progress as newline-delimited JSON when the client asks
+// for it. The stub is a cloud provider, so there are no text deltas here (only
+// the local adapter streams tokens) — what these cover is the framing, the
+// per-attempt events, and that both endings still reach the client.
+
+/** POST /api/fix asking for the stream; returns every event, in order. */
+const reqStream = async (body) => {
+  const res = await fetch(BASE + '/api/fix', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
+    body: JSON.stringify(body),
+  })
+  const text = await res.text()
+  assert.ok(!text.includes(CANARY_KEY), `API key leaked into the stream: ${text.slice(0, 200)}`)
+  return {
+    status: res.status,
+    contentType: res.headers.get('content-type'),
+    events: parseNdjson(text),
+    text,
+  }
+}
+
+test('streaming: the result event carries the same body as the plain reply', async () => {
+  const payload = {
+    prompt: USER_SENTENCE,
+    provider: 'compatible',
+    model: 'stub-large',
+    options: { strength: 'balanced' },
+  }
+  const streamed = await reqStream(payload)
+  const plain = await req('POST', '/api/fix', payload)
+
+  assert.match(streamed.contentType, /application\/x-ndjson/)
+  const result = streamed.events.find((e) => e.type === 'result')
+  assert.ok(result, `no result event in: ${streamed.text.slice(0, 300)}`)
+  assert.equal(result.result.fixedPrompt, plain.body.fixedPrompt)
+  assert.equal(result.result.before.score, plain.body.before.score)
+  assert.equal(result.result.after.score, plain.body.after.score)
+  assert.equal(result.result.meta.attempts, plain.body.meta.attempts)
+  // The result is the last thing on the wire, so a client can stop reading there.
+  assert.equal(streamed.events.at(-1).type, 'result')
+})
+
+test('streaming: every fix announces its attempt before any of its text', async () => {
+  const { events } = await reqStream({
+    prompt: USER_SENTENCE,
+    provider: 'compatible',
+    model: 'stub-large',
+    options: { strength: 'balanced' },
+  })
+  const first = events[0]
+  assert.equal(first.type, 'attempt')
+  assert.equal(first.attempt, 1)
+})
+
+test('streaming: the silent second attempt is announced as one', async () => {
+  // Light touch against a rewrite that ignores the original fails the guard, so
+  // the server runs its one corrective retry — the wait that doubles with
+  // nothing on screen to explain it.
+  const { events } = await reqStream({
+    prompt: `ALWAYS_DIVERGE ${USER_SENTENCE}`,
+    provider: 'compatible',
+    model: 'stub-large',
+    options: { strength: 'light' },
+  })
+  const attempts = events.filter((e) => e.type === 'attempt')
+  assert.equal(attempts.length, 2, 'both attempts are reported')
+  assert.deepEqual(
+    attempts.map((a) => a.attempt),
+    [1, 2]
+  )
+  const result = events.find((e) => e.type === 'result')
+  assert.equal(result.result.meta.attempts, 2)
+})
+
+test('streaming: a failure after the reply has started arrives as an error event', async () => {
+  // The status line has already gone out as 200 by the time the provider is
+  // called, so the failure has to travel as the last event rather than as a
+  // body that simply stops.
+  const { status, events } = await reqStream({
+    prompt: USER_SENTENCE,
+    provider: 'no-such-provider',
+    model: 'stub-large',
+    options: {},
+  })
+  assert.equal(status, 200, 'the reply committed before anything could fail')
+  const failure = events.at(-1)
+  assert.equal(failure.type, 'error')
+  assert.equal(typeof failure.error, 'string')
+  assert.ok(failure.error.length > 0)
+  assert.equal(failure.status >= 400, true)
+  assert.equal(
+    events.some((e) => e.type === 'result'),
+    false,
+    'a failed fix must not also report a result'
+  )
+})
+
+test('streaming: a client that does not ask for it still gets one JSON object', async () => {
+  const res = await fetch(BASE + '/api/fix', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      prompt: USER_SENTENCE,
+      provider: 'compatible',
+      model: 'stub-large',
+      options: {},
+    }),
+  })
+  assert.match(res.headers.get('content-type'), /application\/json/)
+  const text = await res.text()
+  // Every other request in this file asserts this; a new one must not be the
+  // one gap through which a key could leave.
+  assert.ok(!text.includes(CANARY_KEY), `API key leaked into POST /api/fix: ${text.slice(0, 200)}`)
+  const body = JSON.parse(text)
+  assert.equal(typeof body.fixedPrompt, 'string')
+  assert.equal(body.type, undefined, 'not wrapped in an event')
 })

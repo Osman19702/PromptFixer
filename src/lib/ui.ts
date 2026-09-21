@@ -467,3 +467,81 @@ export function refinedNote(meta: { feedback?: FixResult['meta']['feedback'] }):
   const changed = Math.max(0, f.change - (f.unchangedChange?.length ?? 0))
   return ` · refined with your marks (${kept} kept, ${changed} changed)`
 }
+
+// --- waiting -----------------------------------------------------------------
+
+/** What the app is doing right now, as reported by POST /api/fix. */
+export interface FixStage {
+  stage: 'queued' | 'loading' | 'generating'
+  attempt: number
+  ahead?: number
+}
+
+/**
+ * One line naming the wait the user is in. Only one model job runs at a time
+ * and a rewrite that fails the quality check is silently run again, so without
+ * this three quite different waits all look like the same spinner.
+ */
+export function stageLabel(stage: FixStage | null): string {
+  if (!stage) return 'Fixing…'
+  if (stage.stage === 'queued') {
+    const ahead = stage.ahead ?? 1
+    return ahead > 1
+      ? `Waiting for ${ahead} jobs in front of it…`
+      : 'Waiting for the job in front of it…'
+  }
+  if (stage.stage === 'loading') return 'Loading the model into memory…'
+  // The server only ever runs one corrective retry, so attempt 2 is the last.
+  if (stage.attempt > 1) return 'Second attempt — the first did not pass the quality check…'
+  return 'Writing the rewrite…'
+}
+
+/**
+ * Whether the prompt still fits the local model, judged from the editor's own
+ * estimate against the room the server reports. A warning, never a block: the
+ * estimate is four characters to the token and the real budget moves with the
+ * context the model managed to load.
+ *
+ * Returns null when there is nothing to say — a different provider, a server
+ * that does not report a budget, or a prompt comfortably inside it.
+ */
+export function promptFit(
+  provider: string,
+  estimatedTokens: number | undefined,
+  status: Pick<LocalStatus, 'inputBudgetTokens'> | null
+): { over: boolean; message: string } | null {
+  const budget = status?.inputBudgetTokens
+  if (provider !== 'local' || !budget || !estimatedTokens) return null
+  if (estimatedTokens > budget) {
+    return {
+      over: true,
+      message: `Too long for the local model — about ${estimatedTokens} tokens against room for ${budget}. Shorten it, or switch to a cloud provider; otherwise the fix will stop once the model has loaded.`,
+    }
+  }
+  // Close enough that the estimate could be wrong in the wrong direction.
+  if (estimatedTokens > budget * 0.9) {
+    return {
+      over: false,
+      message: `Close to the local model's limit — about ${estimatedTokens} tokens against room for ${budget}.`,
+    }
+  }
+  return null
+}
+
+/** "12.4 MB/s", or an empty string when the rate is not known yet. */
+export function formatRate(bytesPerSecond: number | null | undefined): string {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return ''
+  const mb = bytesPerSecond / 1024 ** 2
+  return mb >= 1 ? `${mb.toFixed(1)} MB/s` : `${(bytesPerSecond / 1024).toFixed(0)} kB/s`
+}
+
+/** "about 3 min left", or an empty string when it cannot be estimated. */
+export function formatEta(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return ''
+  if (seconds < 60) return `about ${Math.max(1, Math.round(seconds))}s left`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `about ${minutes} min left`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `about ${hours}h ${rest}m left` : `about ${hours}h left`
+}

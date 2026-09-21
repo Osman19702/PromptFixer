@@ -24,6 +24,103 @@ minor or a breaking change while the version starts with 0, is in
   `docs/ATDD-RESULTS.pdf` as the run printed it (`acceptance-report`) and shows the traceability
   table as its summary page. Both are kept for 14 days whatever the run's outcome.
 
+- **Every saved result records the build that produced it.** A library entry gains `appVersion`,
+  and `GET /api/library/export` gains one for the file as a whole, beside the unchanged format
+  `version`. The scoring rules change between releases, so a score that has moved since you saved
+  it is either a rule change or a defect — and this is what tells them apart.
+  It is never guessed. A save is written by this build and gets this version; an import keeps
+  whatever the exporting build wrote, because that entry's provenance is not ours to restate; and
+  an entry carrying no version — saved before the field existed, or imported from a build that did
+  not write one — stays unknown, and the library drawer shows it as "version unknown" rather than
+  claiming a build that never saw it. Re-saving an entry stamps it with the build that rewrote it,
+  the same write `updatedAt` already describes.
+- `server/version.js` is the single import for the running version. `server/index.js` and
+  `server/store.js` both read it from there instead of parsing `package.json` themselves, so the
+  version is still written down in exactly one place.
+
+- The running version is shown in the interface, beside the app name, so a bug report can name
+  the build it came from without going looking for it. `GET /api/config` gains `version`, read
+  from `package.json` exactly as `GET /api/health` reads it, so the two cannot disagree and the
+  version is still written down in only one place.
+
+- **The rewrite appears as it is written.** `POST /api/fix` streams its progress when the request
+  asks for it (`Accept: application/x-ndjson`): one JSON object per line, reporting each attempt,
+  the rewrite as the model produces it, and finally the same result body the route returned before.
+  A request without that header gets exactly the JSON object it always did. The rewrite is the
+  first field the grammar emits, so it can be read out of a reply that is still arriving; the Fixed
+  tab shows it as plain text while the fix runs, because the scores, the diff and the marks all
+  need the finished result.
+- **The spinner says which wait this is.** A line beside the Fix button names it: waiting for the
+  job in front of it (only one model job runs at a time), loading the model, writing the rewrite,
+  or the second attempt after a rewrite failed the quality check. That last one used to double the
+  wait with nothing on screen to explain it.
+- **The editor warns about an over-long prompt while you type.** `GET /api/local/status` reports
+  `inputBudgetTokens`, the room the prompt has once the reply is reserved, so a prompt too big for
+  the local model is flagged under the editor in under a second instead of being refused half a
+  minute later, once the model has loaded and counted it. A warning, never a block: the estimate is
+  four characters to the token and the real budget follows the context the model managed to load.
+- **Real numbers on the load and the download.** Loading the model shows a progress bar instead of
+  a bare spinner for about fifteen seconds, and the download shows its speed and how long is left
+  next to the percentage.
+- **The model is released when nobody is using it.** After fifteen minutes with nothing to do it is
+  unloaded and the memory goes back, so the app can sit open next to a browser and a test runner on
+  an 8 GB laptop; the next fix loads it again. **Release model** does it at once. Set
+  `PROMPTFIXER_IDLE_UNLOAD_MS=0` to keep it loaded for ever.
+- **A local fix has a time limit.** Five minutes, after which it is stopped with a message naming
+  the limit rather than holding the single model queue for the rest of the session. Generous on
+  purpose: a fix takes 15–35 s on a GPU and 30–90 s without one. `PROMPTFIXER_FIX_TIMEOUT_MS` changes it,
+  `0` removes it.
+- **Disk is checked before a download, and can be reclaimed from inside the app.** A 2.5 GB
+  download that will not fit is refused in under a second, naming both numbers, instead of failing
+  an hour in; free space that cannot be read never blocks a download. `DELETE
+  /api/local/model/:tier` deletes a model and any part-finished download of it, and the row under
+  the provider selectors shows what each tier occupies and offers to delete it — so trying all
+  three tiers no longer means clearing 8.2 GB by hand from a hidden folder.
+
+- **"Nothing leaves your machine" is now a test, not a claim.** Acceptance scenario F11 was the
+  project's only manual charter: a person unplugging a network cable. It now runs on every push.
+  The server is started under `acceptance/support/netwatch.mjs`, which intercepts outbound TCP
+  (and so TLS, HTTP, HTTPS and `fetch`), UDP, and the whole `dns` resolution family, and records
+  every destination that is not this machine. A full session — score, fix, save, list, export,
+  import, and the same session again in a real browser — has to leave that record empty. The test
+  proves the watcher works before trusting it, by making a deliberate call off the machine and
+  asserting it was caught, and it fails if the session starts a child process, because a child's
+  traffic is the one thing the watcher cannot see through. The browser half asserts the page
+  requests nothing beyond its own origin, from the first request of the document load onwards,
+  and blocks service workers outright.
+- The watcher has its own regression suite, `server/netwatch.test.js`: seventeen checks, each one
+  a way code reached the network past an earlier version of it. A port passed as a string rather
+  than a number; `dns.resolve*`, which builds its socket in C++ and so never appears at the socket
+  layer; an ESM `import { lookup } from 'node:dns'`, which binds to the unpatched function because
+  a builtin's named exports freeze when the facade is first instantiated; `execSync`, which does
+  not call the `spawnSync` export; a worker created with `execArgv: []`; a connected UDP socket,
+  whose `send` names no address; a TLS tunnel whose destination exists only as `servername`; and a
+  Windows UNC path, which carries bytes to another host with no socket to it. All were found by
+  trying to break the watcher on purpose and all are now closed. The watcher is installed through
+  `NODE_OPTIONS` rather than a command-line flag, because a worker and a spawned node child
+  inherit the environment but not the flag.
+- F11 refuses to vouch for a machine with a proxy variable set: a proxy on loopback makes every
+  destination look like this machine, so a clean result there would mean nothing. The harness
+  blanks the proxy variables for every server under test and the watcher reports any that survive.
+- [docs/PRIVACY.md](docs/PRIVACY.md): one page naming every host the app can reach and when, where
+  your prompts and library are stored, what F11 checks, and "What the test does not cover" —
+  the page to hand to whoever approves software where you work.
+
+### Changed
+
+- **The app no longer builds its model engine from source.** `getLlama()` was called with the
+  default `build: 'auto'`, which on a machine with no matching prebuilt binary resolves a release
+  from GitHub, clones llama.cpp and may fetch a toolchain — real network traffic, unasked, from an
+  app whose headline claim is that it makes none. It is now called with `build: 'never'` and
+  `skipDownload: true`, so a missing binary is a clear error instead of a silent download. The
+  installer ships the binary, so this only fires on a platform there is no build for.
+- A fix is no longer a pure function of the prompt, and the documentation now says so. Up to two
+  rewrites from your own library go to the model as examples, so the input changes as the library
+  grows. "Repeatable runs" in the README says what to turn off before comparing or timing two runs.
+- The error path of `POST /api/fix` finishes a streaming reply with an `error` event. The status
+  line has already gone out as 200 by the time the model is called, so a failure that used to
+  arrive as a status code now arrives as the last line of the stream.
+
 ## [0.2.0] - 2026-09-17
 
 ### Added

@@ -40,7 +40,7 @@ i7-9750H, 17 GB RAM, GTX 1660 Ti 6 GB, Windows 11. `node-llama-cpp` picked the V
 
 | | |
 | --- | --- |
-| Model load (one-time per session) | ~15 s |
+| Model load (once per session, or after an idle release) | ~15 s |
 | First fix, 1,210 tokens in / 633 out | 34 s generation, **21.9 tok/s** |
 | Second fix, 819 in / 279 out | 14 s, **20.2 tok/s** |
 | Score on the sample prompt | 60 → 91 |
@@ -48,6 +48,18 @@ i7-9750H, 17 GB RAM, GTX 1660 Ti 6 GB, Windows 11. `node-llama-cpp` picked the V
 Rough expectations elsewhere: a modern 8 GB+ GPU with CUDA lands at 40–80 tok/s; an Apple M-series
 at 25–50; a CPU-only 6-core laptop at 5–10 (a typical fix is then 30–90 s). The `lite` tier
 roughly doubles those.
+
+These are two runs, in one session, on one machine, and nothing in the test suite fails when the
+app gets slower. Treat them as a starting point rather than a baseline.
+
+**The model does not stay loaded.** It is released after 15 minutes with nothing to do
+(`PROMPTFIXER_IDLE_UNLOAD_MS`), so a fix after a long gap pays the load again. A single fix is
+stopped after 5 minutes (`PROMPTFIXER_FIX_TIMEOUT_MS`) — generous enough for a machine with no
+GPU, where 90 s is normal, and short enough to end a run that was never going to finish.
+
+**A fix is not a pure function of the prompt.** Up to two rewrites from your own library are
+passed to the model as examples, so the input changes as the library grows. Time or compare runs
+with an empty library, or with **Use my library as examples** turned off.
 
 ## Should you train a model for this?
 

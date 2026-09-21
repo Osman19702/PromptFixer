@@ -24,9 +24,29 @@ export async function closeBrowser() {
  * Open the app served by `app` (from app.js) in a new context.
  * @param route      `{ pattern, handler }` to intercept a request before the page loads.
  * @param initScript runs before any page script — e.g. seed localStorage.
+ * @param onRequest  called for every request the context makes, registered
+ *                   before the first page exists. A listener attached by the
+ *                   caller afterwards would miss the whole document load — the
+ *                   HTML, the scripts, the stylesheet, any font or icon — which
+ *                   is exactly where an off-origin request would appear.
  */
-export async function openApp(app, { viewport = { width: 1360, height: 880 }, permissions = [], route, initScript } = {}) {
-  const context = await browser.newContext({ viewport, permissions, acceptDownloads: true })
+export async function openApp(
+  app,
+  { viewport = { width: 1360, height: 880 }, permissions = [], route, initScript, onRequest } = {}
+) {
+  const context = await browser.newContext({
+    viewport,
+    permissions,
+    acceptDownloads: true,
+    // Nothing in this app registers one, and a worker's requests would not
+    // reach the listener below.
+    serviceWorkers: 'block',
+  })
+  if (onRequest) {
+    context.on('request', onRequest)
+    // A popup gets its own page; its requests still belong to this context.
+    context.on('page', (p) => p.on('request', onRequest))
+  }
   if (initScript) await context.addInitScript(initScript)
   if (route) await context.route(route.pattern, route.handler)
   const page = await context.newPage()

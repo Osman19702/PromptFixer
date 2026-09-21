@@ -11,6 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { contentWords } from './metaprompt.js'
+import { VERSION } from './version.js'
 
 // Packaged desktop builds run from a read-only archive, so Electron points this
 // at the per-user data directory instead.
@@ -131,10 +132,22 @@ function deriveTitle(entry) {
   return source.length > 70 ? `${source.slice(0, 70)}…` : source
 }
 
-/** The stored shape: `input` over `base`, every field coerced. Shared by save() and importEntries(). */
+/**
+ * The stored shape: `input` over `base`, every field coerced. Shared by save()
+ * and importEntries(); each caller owns the fields only it can answer for.
+ *
+ * `appVersion` is one of those: it is the build that produced the entry, and it
+ * must never be guessed. save() asserts this build, because this build wrote
+ * it. importEntries() asserts nothing, so an imported entry keeps whatever the
+ * exporting build wrote — that provenance is not ours to restate — and an entry
+ * carrying no version stays null, meaning "unknown". Stamping a version onto
+ * one of those would claim something nobody checked, and telling an old scoring
+ * rule apart from a defect is the only reason the field exists.
+ */
 function build(base, input, now) {
   return {
     ...base,
+    appVersion: input.appVersion ?? base.appVersion ?? null,
     title: deriveTitle({ ...base, ...input }),
     original: String(input.original ?? base.original ?? ''),
     fixed: String(input.fixed ?? base.fixed ?? ''),
@@ -156,7 +169,9 @@ export async function save(input) {
     const existingIndex = input.id ? entries.findIndex((e) => e.id === input.id) : -1
     const base = existingIndex >= 0 ? entries[existingIndex] : { id: randomUUID(), createdAt: now }
 
-    const entry = build(base, input, now)
+    // This build is writing the entry, so it is the one that produced it —
+    // the same write updatedAt already describes.
+    const entry = build(base, { ...input, appVersion: VERSION }, now)
 
     const nextEntries =
       existingIndex >= 0

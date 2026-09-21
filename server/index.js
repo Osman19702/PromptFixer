@@ -17,29 +17,39 @@ import {
   extractJson,
   nestedMarks,
   normalizeResult,
+  partialStringField,
   passageStarts,
   pickBest,
   presets,
   scrubLeakedInstructions,
+  STREAMED_FIELD,
   validateRewrite,
 } from './metaprompt.js'
 import { ProviderError, complete, listModels, providerStatus, redact } from './providers.js'
 import * as store from './store.js'
+import { VERSION } from './version.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // PORT=0 is valid (OS-assigned port), so don't treat 0 as "unset".
 const PORT = process.env.PORT !== undefined && process.env.PORT !== '' ? Number(process.env.PORT) : 8787
 const DEFAULT_PROVIDER = process.env.DEFAULT_PROVIDER || 'local'
 const MAX_PROMPT_CHARS = 60_000
-// package.json is the one place the version is written down. electron-builder
-// packs it (build.files), so the same path resolves inside app.asar.
-const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'))
 
 const app = express()
 app.use(cors({ origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/] }))
 app.use(express.json({ limit: '2mb' }))
 
 const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next)
+
+/**
+ * One line of a newline-delimited JSON reply. The route and the error handler
+ * both write to the same stream, so the framing rule lives in one place.
+ */
+const writeEvent = (res, event) => {
+  if (res.writableEnded) return
+  res.write(`${JSON.stringify(event)}
+`)
+}
 
 /**
  * The linter's regexes are not all linear, so the cap applies to every route
@@ -155,6 +165,10 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/config', (_req, res) => {
   res.json({
+    // The interface reads this once at startup and shows it beside the name,
+    // so a bug report names the build it came from. Same source as
+    // /api/health: package.json, the one place the version is written down.
+    version: VERSION,
     providers: providerStatus(),
     defaultProvider: DEFAULT_PROVIDER,
     desktop: process.env.PROMPTFIXER_DESKTOP === '1',
@@ -244,6 +258,22 @@ app.post(
       if (!res.writableFinished) controller.abort()
     })
 
+    // Streaming is opt-in by Accept header: an older client, a script or curl
+    // still gets exactly the single JSON body it got before. Events are one
+    // JSON object per line — no framing to get wrong, and readable in a
+    // terminal. The error middleware finishes the stream if anything throws.
+    const streaming = String(req.headers.accept || '').includes('application/x-ndjson')
+    const send = (event) => {
+      if (streaming) writeEvent(res, event)
+    }
+    if (streaming) {
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
+      res.setHeader('Cache-Control', 'no-store')
+      // A proxy that buffers would undo the whole point of streaming.
+      res.setHeader('X-Accel-Buffering', 'no')
+      res.flushHeaders()
+    }
+
     const attempt = async (retry) => {
       if (controller.signal.aborted) {
         const err = new Error('The request was cancelled.')
@@ -251,6 +281,34 @@ app.post(
         throw err
       }
       attempts++
+      const which = attempts
+      // A retry rewrites from scratch, so the client is told to clear what it
+      // has already shown rather than append the second attempt to the first.
+      send({ type: 'attempt', attempt: which })
+
+      // The grammar emits fixedPrompt first, so the rewrite can be read out of
+      // the reply while the rest of the JSON is still being written. Only the
+      // part not yet sent goes on the wire; the reader never goes backwards.
+      let raw = ''
+      let sent = 0
+      // Not `complete`: that is the provider function imported at the top.
+      let rewriteDone = false
+      const onTextChunk = streaming
+        ? (chunk) => {
+            if (rewriteDone) return
+            raw += chunk
+            const seen = partialStringField(raw, STREAMED_FIELD)
+            if (!seen) return
+            if (seen.text.length > sent) {
+              send({ type: 'delta', attempt: which, text: seen.text.slice(sent) })
+              sent = seen.text.length
+            }
+            // The rest of the reply cannot extend the rewrite, and every scan
+            // walks the whole field, so stop once it is closed.
+            rewriteDone = seen.complete
+          }
+        : undefined
+
       const completion = await complete(
         providerId,
         { model },
@@ -263,6 +321,8 @@ app.post(
           jsonMode: true,
           jsonSchema: OUTPUT_SCHEMA,
           signal: controller.signal,
+          onStage: (stage, detail) => send({ type: 'stage', stage, attempt: which, ...detail }),
+          onTextChunk,
         }
       )
       usage.inputTokens += completion.usage?.inputTokens || 0
@@ -346,7 +406,7 @@ app.post(
     // rewrite: true — placeholders the model deliberately added are a reminder, not a defect.
     const after = analyzePrompt(fixedPrompt, { ...lintOptions, rewrite: true })
 
-    res.json({
+    const body = {
       original: prompt,
       ...best.result,
       fixedPrompt,
@@ -367,7 +427,16 @@ app.post(
         // Only on a "fix again"; undefined drops out of the JSON.
         feedback: feedbackMeta,
       },
-    })
+    }
+
+    if (!streaming) {
+      res.json(body)
+      return
+    }
+    // The same object the non-streaming route returns, so a client that only
+    // wants the answer can ignore every earlier event and read this one.
+    send({ type: 'result', result: body })
+    res.end()
   })
 )
 
@@ -395,7 +464,10 @@ app.get(
     const exportedAt = new Date().toISOString()
     // The same envelope as library.json on disk, so either file imports.
     res.setHeader('Content-Disposition', `attachment; filename="promptfixer-library-${exportedAt.slice(0, 10)}.json"`)
-    res.json({ version: 1, exportedAt, entries: await store.list() })
+    // `version` is the file format, unchanged since the first release.
+    // `appVersion` is the build that wrote the file — a different question, and
+    // the one that explains why an old entry scores differently today.
+    res.json({ version: 1, appVersion: VERSION, exportedAt, entries: await store.list() })
   })
 )
 
@@ -463,6 +535,15 @@ app.post(
   })
 )
 
+// Reclaiming the disk without hunting through a hidden folder: deletes the
+// finished model and any part-file a cancelled download left behind.
+app.delete(
+  '/api/local/model/:tier',
+  wrap(async (req, res) => {
+    res.json(await local.removeModel(String(req.params.tier || '')))
+  })
+)
+
 // An unknown API path is an API error like any other — JSON, through the
 // handler below — not Express's HTML "Cannot GET" page.
 app.use('/api', (req, _res, next) => {
@@ -485,6 +566,27 @@ app.use((err, _req, res, _next) => {
   const known = err instanceof ProviderError || err instanceof local.LocalModelError
   const status = err instanceof ProviderError ? err.status || 502 : err.status || 500
   if (status >= 500 && !known) console.error(err)
+
+  // A streaming reply has already committed its 200, so the failure has to
+  // travel as the last event. Without this the client would see a body that
+  // just stops, with nothing saying why.
+  if (res.headersSent) {
+    // Guarded as a pair: ending a response that has already ended can destroy
+    // the connection, and a connection destroyed here surfaces as ECONNRESET
+    // on whatever request the client had pooled on it.
+    if (!res.writableEnded) {
+      writeEvent(res, {
+        type: 'error',
+        error: redact(err.message || 'Something went wrong.'),
+        status,
+        code: err.code ?? null,
+        retryable: !!err.retryable,
+      })
+      res.end()
+    }
+    return
+  }
+
   res.status(status).json({
     // Belt and braces: providers.js redacts at the source, but no message
     // from any path may carry a key to the browser.

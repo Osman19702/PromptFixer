@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, test } from 'node:test'
 
 import { startApp } from './support/app.js'
+import { parseNdjson } from './support/netwatch.mjs'
 import { closeBrowser, contrastFailures, dialScore, expectToast, launchBrowser, liveScore, openApp, runFix, typePrompt, ui } from './support/browser.js'
 import { BLOG_PROMPT, COMPLAINT, DIVERGENT, FIX_RESPONSE, bloated, leaked, libraryEntry } from './support/fixtures.js'
 import { startStub } from './support/stub-provider.js'
@@ -253,9 +254,24 @@ test('H10 — Warnings read like sentences a person wrote', async () => {
       pattern: '**/api/fix',
       handler: async (r) => {
         const res = await r.fetch()
-        const json = await res.json()
-        json.meta.warningKind = 'something-new'
-        json.meta.warning = 'Raw explanation text from a newer server.'
+        const text = await res.text()
+        const newer = (meta) => {
+          meta.warningKind = 'something-new'
+          meta.warning = 'Raw explanation text from a newer server.'
+        }
+        // The app asks for the fix as a stream, so the body is one JSON object
+        // per line and the result event carries what the plain route returns.
+        if ((res.headers()['content-type'] || '').includes('x-ndjson')) {
+          const events = parseNdjson(text)
+          newer(events.find((e) => e.type === 'result').result.meta)
+          await r.fulfill({
+            response: res,
+            body: `${events.map((e) => JSON.stringify(e)).join('\n')}\n`,
+          })
+          return
+        }
+        const json = JSON.parse(text)
+        newer(json.meta)
         await r.fulfill({ response: res, json })
       },
     },
