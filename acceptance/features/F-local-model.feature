@@ -69,8 +69,10 @@ Feature: F — The local model
     When I close the window
     Then the model is unloaded and the process exits within a bounded time
 
-  @manual
+  @api @browser
   Scenario: F11 — Nothing leaves the machine
-    Given the network is physically disconnected
+    Given no cloud provider is configured
     When I lint, fix, save and export
     Then all four succeed
+    And the server has reached no address off this machine
+    And the page has asked for nothing beyond its own origin

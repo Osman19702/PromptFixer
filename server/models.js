@@ -12,7 +12,7 @@
  * before the JSON.
  */
 
-import { readdirSync, statSync } from 'node:fs'
+import { readdirSync, rmSync, statfsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -132,4 +132,92 @@ export function catalog() {
     blurb,
     recommended: id === recommendedTier(),
   }))
+}
+
+// --- disk --------------------------------------------------------------------
+
+/**
+ * Free space on the volume that holds MODEL_DIR, in bytes, or null when it
+ * cannot be determined (a platform without statfs, or the directory's parents
+ * do not exist yet). Null means "do not block the download" everywhere it is
+ * used: a missing number must never be the reason a download is refused.
+ */
+export function freeSpaceBytes(dir = MODEL_DIR) {
+  // The model directory is created by the downloader, so walk up to the first
+  // parent that exists — the volume is the same either way.
+  let probe = path.resolve(dir)
+  for (;;) {
+    try {
+      const s = statfsSync(probe)
+      return s.bavail * s.bsize
+    } catch {
+      const parent = path.dirname(probe)
+      if (parent === probe) return null
+      probe = parent
+    }
+  }
+}
+
+/** Headroom over the download itself, for the temp file and the final rename. */
+const DOWNLOAD_SLACK_BYTES = 300 * 1024 ** 2
+
+/**
+ * Whether `tier` can be downloaded into MODEL_DIR right now. `ok` is true when
+ * there is room or when free space is unknown; `free` is null in that case.
+ */
+export function spaceForDownload(tier = selectedTier()) {
+  const spec = MODELS[tier]
+  const needed = spec.bytes + DOWNLOAD_SLACK_BYTES
+  const free = freeSpaceBytes()
+  return { ok: free === null || free >= needed, free, needed }
+}
+
+/**
+ * Every file in MODEL_DIR belonging to `tier`: the finished model and any
+ * part-file a cancelled download left behind (the downloader keeps those on
+ * purpose, so a resumed download does not start over).
+ */
+export function filesFor(tier = selectedTier()) {
+  const spec = MODELS[tier]
+  const out = []
+  try {
+    for (const name of readdirSync(MODEL_DIR)) {
+      // A part-file is the final name plus a suffix, so match on containment
+      // rather than on a suffix list that an upstream change could invalidate.
+      if (!name.includes(spec.file)) continue
+      const full = path.join(MODEL_DIR, name)
+      try {
+        const { size } = statSync(full)
+        out.push({ path: full, name, size, complete: size >= spec.bytes * 0.95 })
+      } catch {
+        /* vanished between readdir and stat */
+      }
+    }
+  } catch {
+    /* directory missing */
+  }
+  return out
+}
+
+/** Bytes `tier` currently occupies on disk, finished or part-downloaded. */
+export function bytesOnDisk(tier = selectedTier()) {
+  return filesFor(tier).reduce((n, f) => n + f.size, 0)
+}
+
+/** Delete every file belonging to `tier`. Returns what went, and how much. */
+export function deleteModel(tier) {
+  if (!MODELS[tier]) throw new Error(`Unknown model tier "${tier}".`)
+  const files = filesFor(tier)
+  const removed = []
+  let freed = 0
+  for (const f of files) {
+    try {
+      rmSync(f.path)
+      removed.push(f.name)
+      freed += f.size
+    } catch (err) {
+      throw new Error(`Could not delete ${f.name}: ${err.message}`)
+    }
+  }
+  return { removed, freed }
 }

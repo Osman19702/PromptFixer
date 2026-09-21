@@ -145,22 +145,57 @@ export interface LocalStatus {
   phase: LocalPhase
   downloaded: boolean
   loaded: boolean
-  progress: { downloaded: number; total: number; percent: number }
+  progress: {
+    downloaded: number
+    total: number
+    percent: number
+    /** Smoothed transfer rate; null until two samples exist. */
+    bytesPerSecond?: number | null
+    /** Seconds left at the current rate; null while the rate is unknown. */
+    etaSeconds?: number | null
+  }
+  /** 0-100 while phase is 'loading'; absent on servers that predate it. */
+  loadPercent?: number
   gpu: string | null
   device: string | null
   error: string | null
   /** True while a generation is running; absent on servers that predate it. */
   busy?: boolean
+  /** Room for the prompt once the reply is reserved, in tokens. */
+  inputBudgetTokens?: number
+  /** True when the model was dropped for being idle rather than by the user. */
+  autoUnloaded?: boolean
+  disk?: { free: number | null; used: number }
   lastRun: {
     inputTokens: number
     outputTokens: number
     elapsedMs: number
     tokensPerSecond: number | null
   } | null
-  catalog: (LocalModelInfo & { minRamGb: number; recommended: boolean; downloaded: boolean })[]
+  catalog: (LocalModelInfo & {
+    minRamGb: number
+    recommended: boolean
+    downloaded: boolean
+    /** Bytes this tier occupies, finished or part-downloaded. */
+    onDisk?: number
+  })[]
 }
 
+/**
+ * What the server reports while a fix is running. `stage` says which wait the
+ * user is in, `attempt` starts a fresh rewrite (a retry replaces what was shown
+ * rather than appending to it), and `delta` carries the rewrite as it arrives.
+ */
+export type FixEvent =
+  | { type: 'stage'; stage: 'queued' | 'loading' | 'generating'; attempt: number; ahead?: number }
+  | { type: 'attempt'; attempt: number }
+  | { type: 'delta'; attempt: number; text: string }
+  | { type: 'result'; result: FixResult }
+  | { type: 'error'; error: string; status: number; code: string | null; retryable: boolean }
+
 export interface AppConfig {
+  /** The running build, from package.json. Absent on servers that predate it. */
+  version?: string
   providers: ProviderInfo[]
   defaultProvider: string
   defaultModel: string
@@ -176,6 +211,13 @@ export interface AppConfig {
 
 export interface LibraryEntry {
   id: string
+  /**
+   * The build that produced this entry. Null means unknown — saved before the
+   * field existed, or imported from a build that did not write it. Never
+   * guessed, because telling an old scoring rule apart from a defect is the
+   * only reason it is here.
+   */
+  appVersion?: string | null
   title: string
   original: string
   fixed: string
@@ -193,7 +235,10 @@ export interface LibraryEntry {
 
 /** The GET /api/library/export body; POST /api/library/import takes its `entries`. */
 export interface LibraryExport {
+  /** The file format, not the app. */
   version: number
+  /** The build that wrote the file; absent from exports that predate it. */
+  appVersion?: string
   exportedAt: string
   entries: LibraryEntry[]
 }

@@ -193,6 +193,22 @@ export function Library({ onClose, onLoad, refreshKey, onError, onNotice }: Prop
                       </span>
                     )}
                     {entry.model && <span className="chip">{entry.model}</span>}
+                    {/* Which build produced this result. Shown because the
+                        scoring rules change between releases, so a score that
+                        moved since you saved it is a rule change or a defect,
+                        and this is what tells them apart. Entries saved before
+                        the field existed say so rather than claim a version. */}
+                    <span
+                      className="chip"
+                      data-testid="library-entry-version"
+                      title={
+                        entry.appVersion
+                          ? `Saved by PromptFixer ${entry.appVersion}`
+                          : 'Saved before PromptFixer recorded which build produced a result'
+                      }
+                    >
+                      {entry.appVersion ? `v${entry.appVersion}` : 'version unknown'}
+                    </span>
                     <span data-testid="library-entry-date">
                       {new Date(entry.updatedAt).toLocaleDateString()}
                     </span>
