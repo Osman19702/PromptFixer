@@ -1,0 +1,157 @@
+name: Pages
+
+# Deploys site/ to GitHub Pages, at https://osman19702.github.io/PromptFixer/,
+# with a fresh site/releases.json in it: the page reads that file to show the
+# release notes and the download for every published release, and to point
+# its download button at the newest one. scripts/site-releases.mjs writes the
+# file from the GitHub Releases API right before the upload (its header says
+# what goes in it); it is git-ignored, because the releases are the source of
+# truth and a committed copy would be stale the moment a draft is published.
+#
+# What starts a deployment:
+#
+#   a push to master     only one that touches the site, the script or this
+#                        file; a push that changes the app alone has nothing
+#                        new to show
+#   a release published  the Release workflow (release.yml) only creates
+#                        DRAFTS; a person checks the installer and publishes
+#                        the draft by hand (docs/RELEASING.md, step 10). That
+#                        publish is the moment the download on the site must
+#                        change, and this is what changes it. A pre-release is
+#                        listed too, but is never the download button.
+#   by hand              "Run workflow" on the Actions tab, or
+#                        gh workflow run pages.yml --ref master, to redeploy
+#                        after a change to the Pages settings or a release
+#                        edited in place
+#
+# Only master deploys. The github-pages environment that GitHub creates when
+# Pages is switched to "GitHub Actions" admits deployments from the master
+# branch and nothing else, and it judges a run by the ref that started it. A
+# run started by a published release has the release's TAG for a ref and
+# would be refused before its first step. So a release run does not deploy
+# itself: the `redeploy` job starts this same workflow on master by hand
+# (workflow_dispatch is one of the two events a run may start with the job's
+# own token), and that run is the one that deploys. A published release
+# therefore shows as two runs on the Actions tab, a short one and the
+# deployment it started.
+#
+# A failed run deploys nothing. The script exits 1 without writing when the
+# API cannot be read or lists no published release, and a step after it
+# refuses an empty list; both come before the artifact is uploaded, so the
+# deployment that was live stays live and the run is red where somebody will
+# see it. A stale download button is better than a page with none.
+#
+# Deployments queue instead of cancelling each other, so a release published
+# while a push is deploying still gets its turn and ends up on the site.
+#
+# Setup, once: Settings, Pages, "Build and deployment", Source: "GitHub
+# Actions". Until that is set, deploy-pages fails with "Get Pages site
+# failed". Setting it also creates the github-pages environment with its
+# master-only rule, which is what the `redeploy` job is for; nothing else in
+# the repository or its settings needs to change. The site is served under
+# /PromptFixer/, which is what package.json "homepage" says and what the
+# page's links are written for.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'site/**'
+      - 'scripts/site-releases.mjs'
+      - '.github/workflows/pages.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Each job names the permissions it needs; the token has none by default.
+permissions: {}
+
+# One deployment at a time, and none is thrown away: the run for a published
+# release must reach the site even if a push started one just before it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # A published release: start a deployment of master (see the header). It
+  # takes actions: write to start a run, and this job alone gets it.
+  redeploy:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Start a deployment of master for ${{ github.event.release.tag_name }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref master --repo "$GITHUB_REPOSITORY"
+
+  deploy:
+    if: github.event_name != 'release'
+    # Linux, not Windows as in ci.yml and release.yml: nothing is built,
+    # tested or packaged here, the script is Node alone, the Pages actions
+    # behave the same on either runner, and a Linux runner is ready in
+    # seconds where a Windows one takes a minute or more.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # contents to check out, pages and id-token to deploy: deploy-pages proves
+    # it is this workflow with an OIDC token, and a plain contents:read cannot.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The run's own ref, which the environment has already required to be
+      # master: the site is master's site/, whatever started the run.
+      - uses: actions/checkout@v7
+
+      # Node 22, as in ci.yml and release.yml. No npm ci, and so no npm cache
+      # to restore: the script uses nothing beyond Node itself (fetch, fs,
+      # path), and installing electron and a language-model runtime to write
+      # one JSON file would be the slowest step of the job.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The token lifts the API's anonymous limit of sixty requests an hour,
+      # which the runner shares with every other anonymous caller of its
+      # address. It is the job's own token, read-only here (permissions above).
+      - name: Release data from the GitHub Releases API
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/site-releases.mjs
+
+      # The script refuses to write an empty list, so this is a second lock on
+      # the same door: nothing reaches Pages without at least one release in it.
+      - name: site/releases.json lists at least one release
+        run: |
+          node -e '
+            const fs = require("node:fs")
+            if (!fs.existsSync("site/releases.json")) {
+              console.error("site/releases.json is missing; nothing is deployed")
+              process.exit(1)
+            }
+            const data = JSON.parse(fs.readFileSync("site/releases.json", "utf8"))
+            if (!Array.isArray(data.releases) || data.releases.length === 0) {
+              console.error("site/releases.json lists no release; nothing is deployed")
+              process.exit(1)
+            }
+            console.log(data.releases.length + " release(s), latest " + data.latest)
+          '
+
+      - uses: actions/configure-pages@v5
+
+      # The whole of site/, releases.json included, as one artifact for Pages.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - uses: actions/deploy-pages@v4
+        id: deployment

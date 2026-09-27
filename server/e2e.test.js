@@ -435,6 +435,16 @@ test('GET /api/config carries the running version, and it is the one /api/health
   assert.equal(config.body.version, health.body.version)
 })
 
+test('GET /api/config names the project website, and it is the one package.json names', async () => {
+  // The interface links to it and nothing fetches it, so all there is to
+  // check is that the address the top bar offers is the one package.json
+  // writes down — and that it is an address a browser can open.
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'))
+  const config = await req('GET', '/api/config')
+  assert.equal(config.body.homepage, pkg.homepage)
+  assert.match(config.body.homepage, /^https:\/\//, 'an https address, not a placeholder')
+})
+
 test('GET /api/config lists providers and presets', async () => {
   const { status, body } = await req('GET', '/api/config')
   assert.equal(status, 200)

@@ -196,6 +196,11 @@ export type FixEvent =
 export interface AppConfig {
   /** The running build, from package.json. Absent on servers that predate it. */
   version?: string
+  /**
+   * The project website, from package.json, for the link in the top bar.
+   * Absent on servers that predate it; '' when package.json names none.
+   */
+  homepage?: string
   providers: ProviderInfo[]
   defaultProvider: string
   defaultModel: string

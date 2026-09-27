@@ -5,6 +5,9 @@ works offline and nothing you type leaves your machine. That last claim is check
 not just asserted: see [docs/PRIVACY.md](docs/PRIVACY.md) for what does and does not leave, and how
 the check works.
 
+Website: **[osman19702.github.io/PromptFixer](https://osman19702.github.io/PromptFixer/)** — the
+latest download, and what changed in every release.
+
 Paste a prompt. It's scored instantly against ~30 prompt-engineering rules. Press **Fix prompt**
 and the local model rewrites it; the rewrite is re-scored so you can see whether it actually got
 better, with a word-level diff and a change log explaining every edit.
@@ -65,6 +68,8 @@ PromptFixer/
 │                          with the commit before on a Windows runner, and keeps both reports
 │                          release.yml: a pushed tag v<version> builds the installer onto a draft GitHub release;
 │                          started by hand it is a rehearsal that releases nothing
+│                          pages.yml: a push to master that touches site/, a published release, or a run by hand
+│                          writes site/releases.json from the GitHub Releases API and publishes site/ to GitHub Pages
 ├── electron/
 │   ├── main.js            Electron main process: starts the server in-process, opens the window
 │   ├── env.js             Desktop .env loading (user-data dir) and desktop defaults
@@ -86,6 +91,7 @@ PromptFixer/
 │   ├── lint-prompts.js    Lint prompt files in CI (npm run lint:prompts)
 │   ├── check-release.mjs  The release gate: version, lock file, changelog and sources agree (npm run check:release)
 │   ├── changelog-section.mjs  Prints one version's CHANGELOG.md section; the release notes are cut from it
+│   ├── site-releases.mjs  Writes site/releases.json, the website's release list, from GitHub (npm run site:releases)
 │   ├── visual.mjs         Visual check runner: build, start stub + server, run Elastishot (npm run visual)
 │   └── visual.test.js     Tests for the runner's arguments, approve step and exit codes, and the config's shape
 ├── src/                   React UI (Vite + TypeScript)
@@ -105,6 +111,9 @@ PromptFixer/
 │   ├── ATDD.md            Acceptance test-driven development: strategy and the acceptance scenarios
 │   ├── PRIVACY.md         What does and does not leave the machine, and how scenario F11 checks it
 │   └── LOCAL-MODEL.md     Model choice, measured performance, and the train/fine-tune analysis
+├── site/                  The website (https://osman19702.github.io/PromptFixer/): index.html, styles.css, site.js,
+│                          icon.svg, promptfixer.png, README.md; releases.json is written by npm run site:releases
+│                          and git-ignored
 ├── dist/                  Built frontend (npm run build) — served by the server
 ├── elastishot.config.mjs  Visual check targets: seven screens, each at two window sizes
 ├── .elastishot/           Approved pictures and run reports of the visual check (per machine, git-ignored)
@@ -164,6 +173,7 @@ most of the way for free.
 | `npm run dist:win` | Build a Windows installer into `release/` (`dist:mac`, `dist:linux` likewise) |
 | `npm run release:checksums` | Write `release/SHA256SUMS.txt` for the built installers (`-- --check` verifies it; `-- --dir <folder>` targets another folder) |
 | `npm run check:release` | The gate a release must pass: `package.json`, `package-lock.json` and `CHANGELOG.md` name the same version and no source file repeats it (`-- --tag v0.2.0`, the form a release uses, also compares the tag name and refuses entries left under [Unreleased]) — see [docs/RELEASING.md](docs/RELEASING.md) |
+| `npm run site:releases` | Write `site/releases.json` for the website from the GitHub Releases API: every published release with its tag, date, notes, installer name, size and SHA-256. The Pages workflow (`.github/workflows/pages.yml`) runs it before uploading `site/`; the file is git-ignored |
 | `npm run dev` | Browser mode: API (watch) + Vite dev server at http://localhost:5173 |
 | `npm start` | Browser mode: serve the built app + API from one port (8787) |
 | `npm test` | Unit and component tests — no key, no model download needed |
@@ -184,8 +194,10 @@ CI workflow runs that check, the typecheck, the build and the unit and component
 and the acceptance suite in another. A release is cut by pushing a tag `v<version>`; the Release
 workflow builds the installer and `SHA256SUMS.txt` onto a draft GitHub release, which is published
 by hand once the download has been checked. Started by hand, the same workflow is a rehearsal: it
-builds everything on the runner and creates no release. The checklist, and what counts as a patch, a minor or a
-breaking change, is in [docs/RELEASING.md](docs/RELEASING.md).
+builds everything on the runner and creates no release. Publishing a release also redeploys the
+website with that release's download and notes; the Pages workflow reads both from the release, so
+nothing on the site has to be updated by hand. The checklist, and what counts as a patch, a minor
+or a breaking change, is in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Lint prompts in CI
 
@@ -500,6 +512,9 @@ place, whatever that original happens to contain.
   loads it again. The same row deletes a downloaded model, part-finished downloads included, so the
   disk can be reclaimed without going near `~/.promptfixer/models`. Left alone, the model is
   released after 15 minutes of doing nothing.
+- **What's new.** The link in the top bar opens the website in your browser — the latest download,
+  and the notes of every release. It is a plain link: the app makes no update check and never
+  fetches the site on its own.
 
 ## Troubleshooting
 

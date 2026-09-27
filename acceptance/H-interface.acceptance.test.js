@@ -402,3 +402,34 @@ test('H14 — Every action without a visible result reports itself', async () =>
     await close()
   }
 })
+
+test('H15 — The interface links to the project website, and the link leaves the app the safe way', async () => {
+  const { homepage } = (await app.get('/api/config')).body
+  assert.match(homepage, /^https:\/\//, 'the server names the website, and it is an https address')
+  const origin = new URL(homepage).origin
+  // Every request to the website's origin is answered here, registered before
+  // the page exists: F11 forbids the browser half any off-machine traffic, and
+  // this scenario must not be the one to create it. What "opens" is a stub.
+  const { context, page, close } = await openApp(app, {
+    route: {
+      pattern: (url) => url.origin === origin,
+      handler: (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>stub</title>' }),
+    },
+  })
+  try {
+    const link = page.locator('[data-testid="site-link"]')
+    await link.waitFor()
+    assert.equal(await link.getAttribute('href'), homepage, 'the address the server named, not a copy of it')
+    assert.equal(await link.getAttribute('target'), '_blank', 'opens outside the app')
+    assert.match(await link.getAttribute('rel'), /\bnoreferrer\b/, 'and tells the site nothing about where it came from')
+    assert.equal(await page.getByRole('link', { name: /What's new/ }).getAttribute('data-testid'), 'site-link', 'named for what it is, not for the glyph')
+
+    const [popup] = await Promise.all([context.waitForEvent('page'), link.click()])
+    await popup.waitForLoadState()
+    assert.equal(popup.url(), homepage, 'the website opened in a page of its own')
+    assert.equal(new URL(page.url()).origin, new URL(app.base).origin, 'the app page stayed at its own address')
+    assert.equal(await ui.editor(page).count(), 1, 'with the editor still there')
+  } finally {
+    await close()
+  }
+})

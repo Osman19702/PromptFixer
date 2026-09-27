@@ -1,13 +1,14 @@
 # Acceptance test-driven development for PromptFixer
 
-> **Status (2026-09-17):** the scenarios in Part 3 exist as Gherkin in `acceptance/features/` and
+> **Status (2026-09-27):** the scenarios in Part 3 exist as Gherkin in `acceptance/features/` and
 > as executable tests in `acceptance/*.acceptance.test.js` (`npm run test:acceptance`). The first
 > iteration's results, including the product defects it found, are in `docs/ATDD-REPORT.md`. Two
 > groups have been added since: Group M (marking a rewrite and fixing it again) and Group N (the
-> visual check with Elastishot). That makes 113 scenarios in fourteen groups — 102 automated, 11
-> waiting on the nightly machine, the packaged installer or a person; `npm run test:trace` prints
-> the list. Parts 1 and 2 describe the conversion as it was planned and are kept as written, apart
-> from the counts and the visual seam.
+> visual check with Elastishot); F11 (nothing leaves the machine) became a test in 0.3.0, and H15
+> (the link to the website) was added in 0.4.0. That makes 114 scenarios in fourteen groups — 104
+> automated, 10 waiting on the nightly machine, the packaged installer or a person;
+> `npm run test:trace` prints the list. Parts 1 and 2 describe the conversion as it was planned
+> and are kept as written, apart from the counts and the visual seam.
 
 This document converts PromptFixer's development strategy to ATDD. It has three parts: an honest
 read of where the test strategy stands today, the target shape and the way of working that gets us

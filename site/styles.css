@@ -1,0 +1,914 @@
+/* The PromptFixer site. Dark first, on the app's own palette from src/styles.css, so the page
+   and the screenshot on it look like one product; the light theme keeps every text and
+   background pairing at 4.5:1 or better, which is why its accent and status colours are darker
+   than the app's. Everything is a token on :root so both themes share every rule below. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0b0e14;
+  --bg-soft: #0f131b;
+  --panel: #141a24;
+  --panel-2: #1a212d;
+  --border: #232c3a;
+  --text: #e7ecf4;
+  --text-dim: #9aa7b8;
+  --text-faint: #7f8b9c;
+  --accent: #6ea8fe;
+  --good: #3ecf8e;
+  --warn: #f0b429;
+  --bad: #f2616b;
+  /* Dark text on the accent reads at 8:1; white on it would not pass, so buttons and badges
+     never use white here. */
+  --button-bg: #6ea8fe;
+  --button-text: #0b0e14;
+  --button-hover: #8dbbff;
+  /* The plain button's one visible edge, at 3:1 or better against the page and the card in
+     each theme, so a button is a button before it is read. */
+  --button-border: #5a697f;
+  --code-bg: #0f131b;
+  --header-bg: rgba(11, 14, 20, 0.86);
+  --glow: rgba(110, 168, 254, 0.16);
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  --radius: 10px;
+  --radius-sm: 7px;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f6f8fb;
+    --bg-soft: #eef2f7;
+    --panel: #ffffff;
+    --panel-2: #f1f4f9;
+    --border: #d3dae5;
+    --text: #111827;
+    --text-dim: #4b5567;
+    --text-faint: #5f6b7c;
+    --accent: #1d5fd1;
+    --good: #147a4d;
+    --warn: #8a5a00;
+    --bad: #c0303a;
+    --button-bg: #1d5fd1;
+    --button-text: #ffffff;
+    --button-hover: #1750b3;
+    --button-border: #808a99;
+    --code-bg: #eef2f7;
+    --header-bg: rgba(246, 248, 251, 0.88);
+    --glow: rgba(29, 95, 209, 0.12);
+    --shadow: 0 24px 50px rgba(17, 24, 39, 0.16);
+  }
+}
+
+/* --- base ---------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* The sticky header would otherwise cover the heading an anchor link jumps to; on a phone it
+     is two rows tall, the brand above the links. */
+  scroll-padding-top: 6.5rem;
+}
+
+@media (min-width: 720px) {
+  html {
+    scroll-padding-top: 5rem;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  /* A phone must never scroll sideways; anything wider than the viewport is a defect, not a feature. */
+  overflow-x: hidden;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+code,
+pre {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+code {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.1em 0.35em;
+  /* A token in a code span is broken only when it would not fit on a line of its own, so a
+     phone never scrolls sideways; the hash and the code blocks, which are long by nature, are
+     the only places that break anywhere. */
+  overflow-wrap: break-word;
+}
+
+/* In running text a code span is borderless, as GitHub renders the same notes, so a sentence
+   with three of them does not turn into a row of boxes. */
+.notes code,
+.aside p code,
+.before p code {
+  border: 0;
+  padding: 0.05em 0.3em;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  margin: 0.75rem 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.92em;
+}
+
+p,
+li {
+  overflow-wrap: break-word;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.5rem;
+}
+
+h2 {
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+}
+
+h3 {
+  font-size: 1.15rem;
+}
+
+h4 {
+  font-size: 1rem;
+  margin-top: 1.5rem;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.container {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+@media (min-width: 720px) {
+  .container {
+    padding: 0 32px;
+  }
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+/* --- skip link ----------------------------------------------------------- */
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -100px;
+  z-index: 100;
+  background: var(--button-bg);
+  color: var(--button-text);
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  top: 16px;
+}
+
+/* --- header -------------------------------------------------------------- */
+
+/* The header stays pinned at every width so the download is one click away after the hero has
+   scrolled off; on a phone it is two rows, the brand above a single row of links. */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.brand img {
+  border-radius: 8px;
+}
+
+.brand-tagline {
+  display: none;
+  font-weight: 400;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+@media (min-width: 720px) {
+  .brand-tagline {
+    display: inline;
+  }
+}
+
+.site-header nav {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.site-header nav a {
+  white-space: nowrap;
+}
+
+.site-header nav a:not(.button) {
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+}
+
+.site-header nav a:not(.button):hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.site-header nav .button {
+  margin-left: 0.35rem;
+}
+
+/* On a phone the links keep to one row and scroll sideways inside the header if a very narrow
+   screen leaves them no room, rather than wrapping to a third row or widening the page; the
+   scrollbar is left visible so that a clipped link announces itself. The GitHub link stays
+   off the phone header, where the hero and the footer both carry it, so that the row fits a
+   320px screen and a reader's wider text spacing. The padding and the negative margin cancel
+   out and leave the scroll box room for a focus ring. */
+@media (max-width: 719px) {
+  .site-header nav {
+    flex-wrap: nowrap;
+    gap: 0.125rem;
+    overflow-x: auto;
+    padding: 5px;
+    margin: -5px;
+  }
+
+  .site-header nav a[href*="github.com"] {
+    display: none;
+  }
+
+  /* Sized so that the three links fit a 320px screen with room to spare. */
+  .site-header nav a:not(.button) {
+    font-size: 0.85rem;
+    padding: 0.35rem 0.45rem;
+  }
+
+  .site-header nav .button {
+    margin-left: 0.125rem;
+    padding: 0.25rem 0.5rem;
+  }
+}
+
+/* --- hero ---------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  padding: 4rem 0 2rem;
+  text-align: center;
+  overflow: hidden;
+}
+
+.hero::before {
+  /* A soft accent glow behind the headline is the one decoration the page allows itself. */
+  content: "";
+  position: absolute;
+  inset: -20% 0 auto;
+  height: 60%;
+  background: radial-gradient(ellipse at 50% 0%, var(--glow), transparent 65%);
+  pointer-events: none;
+}
+
+.hero .container {
+  position: relative;
+}
+
+/* Small capitals rather than text-transform, here and on the badge: Chromium copies a
+   transform into the accessible name, and a screen reader spells out an all-caps word. */
+.eyebrow {
+  margin: 0 0 1rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  font-variant-caps: all-small-caps;
+}
+
+@media (min-width: 480px) {
+  .eyebrow {
+    font-size: 1.05rem;
+  }
+}
+
+/* Each half of the eyebrow is kept whole so that the only place it can break is at the dot, and
+   a balanced lede is kept from breaking "prompt-engineering" at its hyphen. */
+.nowrap {
+  white-space: nowrap;
+}
+
+h1 {
+  font-size: clamp(2rem, 5.5vw, 3.4rem);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  margin: 0 auto 1.25rem;
+  max-width: 18ch;
+}
+
+.lede {
+  font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+  color: var(--text-dim);
+  /* Measured: at 62ch the two sentences run to five lines on a desktop, at 64ch to four. */
+  max-width: 64ch;
+  margin: 0 auto 1.75rem;
+}
+
+.lede strong {
+  color: var(--text);
+}
+
+/* Short centred or multi-line runs are balanced so a line does not end on a one-word orphan.
+   The headline is left alone on purpose: balanced, it loses the "Offline." line it is built on. */
+.lede,
+.requirements,
+.section-lede,
+.screenshot figcaption,
+.features h3 {
+  text-wrap: balance;
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.requirements {
+  color: var(--text-faint);
+  font-size: 0.92rem;
+  margin: 0 auto 2.5rem;
+  max-width: 60ch;
+}
+
+.screenshot {
+  margin: 0 auto;
+  max-width: 1000px;
+}
+
+.screenshot img {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  background: var(--panel);
+}
+
+.screenshot figcaption {
+  color: var(--text-dim);
+  font-size: 0.92rem;
+  margin-top: 1rem;
+}
+
+/* --- buttons ------------------------------------------------------------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.7rem 1.2rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--button-border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+  max-width: 100%;
+  text-align: center;
+}
+
+.button:hover {
+  background: var(--panel);
+  text-decoration: none;
+}
+
+.button.primary {
+  background: var(--button-bg);
+  border-color: transparent;
+  color: var(--button-text);
+}
+
+.button.primary:hover {
+  background: var(--button-hover);
+}
+
+/* An accent ring around an accent button would vanish into it; the text colour stands out
+   against both the button and the page in either theme. */
+.button.primary:focus-visible {
+  outline-color: var(--text);
+}
+
+.button.small {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.85rem;
+  border-radius: var(--radius-sm);
+}
+
+/* --- sections ------------------------------------------------------------ */
+
+.section {
+  padding: 3.5rem 0;
+}
+
+.section-soft {
+  background: var(--bg-soft);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.section-lede {
+  color: var(--text-dim);
+  margin: 0 0 1.75rem;
+  max-width: 70ch;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.35rem;
+  min-width: 0;
+}
+
+.card p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- how it works -------------------------------------------------------- */
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 900px) {
+  .steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.steps li {
+  position: relative;
+  padding-top: 1.35rem;
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--button-bg);
+  color: var(--button-text);
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.steps p {
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.steps strong {
+  color: var(--text);
+}
+
+/* --- features ------------------------------------------------------------ */
+
+.features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+}
+
+.features h3 {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+}
+
+.features p {
+  color: var(--text-dim);
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+/* One colour for every dot: a mix of colours would read as a status legend the page does not
+   have. The top margin centres it on the first line of a title that wraps. */
+.dot {
+  flex: 0 0 auto;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-top: 0.3em;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* --- download ------------------------------------------------------------ */
+
+.download-grid {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+}
+
+/* The card and "Run from source" share the first row and come out about the same height; the
+   checks a user makes before running the installer take a full-width row under them, three
+   abreast, so neither column is left with a tall empty stretch under it. */
+@media (min-width: 900px) {
+  .download-grid {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+
+  .before {
+    grid-column: 1 / -1;
+  }
+
+  .before-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.before-grid {
+  display: grid;
+  gap: 1rem 1.5rem;
+}
+
+.before p {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  margin: 0 0 0.75rem;
+}
+
+.before pre {
+  margin-bottom: 0;
+}
+
+.download-card h3 {
+  font-size: 1.4rem;
+}
+
+/* The numbers are filled in by site.js; until it has data, the card shows only the generic
+   link to GitHub and no sentence on the page refers to a field that is empty, so a missing
+   releases.json never shows a blank or points at one. */
+.download-card[data-state="fallback"] .needs-data,
+html:not([data-releases="ready"]) .needs-data {
+  display: none;
+}
+
+.notice {
+  border-left: 3px solid var(--warn);
+  background: var(--panel-2);
+  padding: 0.6rem 0.9rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+}
+
+.facts {
+  margin: 1rem 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.fact {
+  display: grid;
+  gap: 0.15rem 1rem;
+  grid-template-columns: 5rem minmax(0, 1fr);
+  align-items: baseline;
+}
+
+.fact dt {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.fact dd {
+  margin: 0;
+  min-width: 0;
+}
+
+@media (max-width: 479px) {
+  .fact {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Sized so that the 64 characters fit on one line in the card at the site's full width; on a
+   narrower screen the hash breaks wherever the line ends, which is the one place that is right
+   for a string with no words in it. */
+.hash {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 0.8em;
+  line-height: 1.5;
+  padding: 0.35rem 0.5rem;
+}
+
+.hash-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.4rem;
+  font-size: 0.9rem;
+}
+
+.status {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.status.is-error {
+  color: var(--warn);
+}
+
+.cta-row {
+  margin: 0.25rem 0 1.5rem;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin: 1.25rem 0 0;
+}
+
+.aside h3 {
+  font-size: 1.15rem;
+}
+
+.aside p {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+/* --- what's new ---------------------------------------------------------- */
+
+.fallback {
+  color: var(--text-dim);
+}
+
+.releases {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.release {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.release summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.release summary::-webkit-details-marker {
+  display: none;
+}
+
+.release summary::before {
+  content: "";
+  flex: 0 0 auto;
+  align-self: center;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: 2px solid var(--text-dim);
+  border-bottom: 2px solid var(--text-dim);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.release details[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.release summary h3 {
+  display: inline;
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-variant-caps: all-small-caps;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--button-bg);
+  color: var(--button-text);
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}
+
+.badge.prerelease {
+  background: transparent;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+
+.release-date {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+.release-body {
+  padding: 0 1.25rem 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.release-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin: 1rem 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+/* The page's one sub-heading style, shared by the release notes and the checks under the
+   download card. */
+.notes h4,
+.notes h5,
+.before h4 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-dim);
+  margin: 1.25rem 0 0.5rem;
+}
+
+.before h4 {
+  margin-top: 0.5rem;
+}
+
+.notes p {
+  margin: 0.6rem 0;
+}
+
+.notes ul {
+  margin: 0.4rem 0;
+  padding-left: 1.25rem;
+}
+
+.notes li {
+  margin: 0.45rem 0;
+}
+
+.notes li::marker {
+  color: var(--text-faint);
+}
+
+.notes hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.25rem 0;
+}
+
+/* --- footer -------------------------------------------------------------- */
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  padding: 2rem 0 3rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+.footer-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+
+.byline {
+  margin: 0;
+}
+
+/* --- motion -------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}

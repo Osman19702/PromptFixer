@@ -121,6 +121,16 @@ textarea {
   color: var(--text-faint);
   font-weight: 450;
   font-size: 12px;
+  /* The brand is the one flex item in the bar that can shrink, and the
+     tagline is what it would shrink: three stacked words in a 54px bar. */
+  white-space: nowrap;
+}
+/* Below this the controls on the right leave the tagline no room; the name
+   and the version pill are what matter, so the tagline gives way. */
+@media (max-width: 1100px) {
+  .brand small {
+    display: none;
+  }
 }
 /* The running build, beside the name. Quiet enough to ignore, legible enough
    to read off the screen into a bug report. */
@@ -241,6 +251,28 @@ select:disabled {
 .btn.sm {
   padding: 4px 9px;
   font-size: 12px;
+}
+/* The What's new link in the top bar is an anchor in the ghost button's
+   clothes: an anchor because it is a link (the browser, or the desktop shell,
+   takes it from there), styled as a button so the top bar reads as one row of
+   controls. Every anchor default a button does not have is taken back here.
+   Focus needs nothing: buttons show the browser's own focus-visible ring — no
+   rule takes it away — and so does the anchor, for the same reason. */
+.site-link,
+.site-link:link,
+.site-link:visited {
+  text-decoration: none;
+  color: var(--text-dim);
+}
+.site-link:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+/* The glyph says "leaves the app"; it should not compete with the words. */
+.site-link-glyph {
+  font-size: 0.85em;
+  line-height: 1;
+  opacity: 0.7;
 }
 
 .toggle {

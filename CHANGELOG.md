@@ -8,6 +8,36 @@ minor or a breaking change while the version starts with 0, is in
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-27
+
+### Added
+
+- **A website: <https://osman19702.github.io/PromptFixer/>.** What PromptFixer does, the latest
+  installer with its size and SHA-256, and the notes of every release, newest first. The page is
+  the `site/` folder, published by a Pages workflow (`.github/workflows/pages.yml`) that runs when
+  a release is published and when `site/` changes on master. Before it uploads the page it runs
+  `npm run site:releases` (`scripts/site-releases.mjs`), which writes the git-ignored
+  `site/releases.json` from the GitHub Releases API — every published release with its installer,
+  the installer's size, and its hash read from the release's own `SHA256SUMS.txt` — so the page
+  cannot quote a number that is not on a release, and a fetch that fails keeps the previous
+  deployment live rather than publishing an empty list. Once loaded, the page asks
+  `api.github.com` once whether a newer release exists than the one it was built with, so a
+  deployment that lagged behind a release still points at the newest one. It loads no fonts,
+  scripts or analytics from anywhere else.
+- **What's new** in the top bar opens that website in your own browser. `GET /api/config` gains
+  `homepage`, read from `package.json` exactly as `version` is, and the interface shows the link
+  only when it is an `https://` address. It is a link, not an update check: the app never requests
+  the site, there is still no update check, and scenario F11 (nothing leaves the machine) still
+  runs on every push. In the desktop app the link takes the same road as any other external
+  address — the window stays ours and the system browser opens it — which `electron/handlers.js`
+  now holds as `windowOpenGuard`, with tests. Acceptance scenario H15 covers the link.
+
+### Changed
+
+- `package.json` `homepage` is the website instead of the README.
+- [docs/PRIVACY.md](docs/PRIVACY.md) names the link and says that clicking it is the only way the
+  app's window reaches the site.
+
 ## [0.3.0] - 2026-09-21
 
 ### Added
@@ -246,7 +276,8 @@ First public release: a Windows x64 installer.
   (`npm run test:acceptance`), a traceability matrix (`npm run test:trace`) and a results report
   (`npm run test:report`).
 
-[Unreleased]: https://github.com/Osman19702/PromptFixer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Osman19702/PromptFixer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Osman19702/PromptFixer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Osman19702/PromptFixer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Osman19702/PromptFixer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Osman19702/PromptFixer/releases/tag/v0.1.0

@@ -1,12 +1,12 @@
 {
   "name": "promptfixer",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Lint, score and rewrite LLM prompts. Desktop app with a built-in local model; cloud providers optional.",
   "author": "Osman Turalioglu",
   "license": "MIT",
-  "homepage": "https://github.com/Osman19702/PromptFixer#readme",
+  "homepage": "https://osman19702.github.io/PromptFixer/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Osman19702/PromptFixer.git"
@@ -38,7 +38,8 @@
     "test:all": "npm test && npm run test:acceptance && npm run test:trace",
     "test:report": "node acceptance/report/run.mjs",
     "visual": "node scripts/visual.mjs",
-    "visual:approve": "node scripts/visual.mjs --update"
+    "visual:approve": "node scripts/visual.mjs --update",
+    "site:releases": "node scripts/site-releases.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

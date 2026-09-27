@@ -78,7 +78,9 @@ entry: the same check wants a dated section for exactly that version.
     in the shape of the one before it. If that page went in with the release commit, its size
     and hash read `TBD` until now. The size is in MiB everywhere (bytes / 1,048,576, which is
     also what the workflow's notes say). Commit as `docs: x.y.z download`. The download button on
-    osmanturalioglu.com lives in another repository and wants the same link.
+    osmanturalioglu.com lives in another repository and wants the same link. The website needs
+    nothing: publishing the draft (step 10) redeploys it from the release itself
+    (`.github/workflows/pages.yml`), download, size and hash included.
 
     This comes last because the hash does not exist before the build, and the build is of the
     tagged commit: the commit that quotes the hash can never be the commit that was built. The

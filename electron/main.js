@@ -11,7 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { loadDesktopEnv } from './env.js'
-import { installQuitHandler, willNavigateGuard } from './handlers.js'
+import { installQuitHandler, willNavigateGuard, windowOpenGuard } from './handlers.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -48,10 +48,7 @@ async function createWindow() {
   // Nothing may open a second window or navigate this one away from our
   // server (window.open, target=_blank, or a file/URL dropped on the page).
   // http(s) links go to the system browser instead.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  mainWindow.webContents.setWindowOpenHandler(windowOpenGuard(shell))
   mainWindow.webContents.on('will-navigate', willNavigateGuard(origin, shell))
 
   mainWindow.once('ready-to-show', () => mainWindow.show())

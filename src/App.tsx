@@ -652,6 +652,30 @@ export default function App() {
           <button className="btn" onClick={() => setLibraryOpen(true)}>
             Library
           </button>
+
+          {/* A link, not an update check. The website is where the latest
+              release and its notes live, and the user reaches it by opening
+              it in their own browser; the app itself never fetches it, which
+              is what lets docs/PRIVACY.md say there is no update check. Only
+              an https address is offered: a stray value in package.json must
+              not become a file: or javascript: link in the top bar. In the
+              desktop app target=_blank is a window.open to Chromium, which
+              the main process hands to the system browser and denies in-app. */}
+          {typeof config.homepage === 'string' && config.homepage.startsWith('https://') && (
+            <a
+              className="btn ghost site-link"
+              href={config.homepage}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="site-link"
+              title="Latest updates and downloads on the PromptFixer website (opens in your browser)"
+            >
+              What's new
+              <span className="site-link-glyph" aria-hidden="true">
+                ↗
+              </span>
+            </a>
+          )}
         </div>
       </header>
 

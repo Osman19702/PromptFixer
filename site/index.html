@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Pages cannot send headers, so the policy is here: the page's own files, one call to the
+       GitHub API, and nothing else, which is the promise the README makes and this enforces. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' https://api.github.com; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PromptFixer — lint, score and rewrite LLM prompts, offline</title>
+  <meta name="description" content="PromptFixer is a desktop app that lints, scores and rewrites LLM prompts with a built-in local model. It works offline and nothing you type leaves your machine. Download the Windows installer, check its SHA-256 and read what changed in each release.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="author" content="Osman Turalioglu">
+  <link rel="canonical" href="https://osman19702.github.io/PromptFixer/">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PromptFixer">
+  <meta property="og:title" content="PromptFixer — lint, score and rewrite LLM prompts, offline">
+  <meta property="og:description" content="A desktop app that lints, scores and rewrites LLM prompts with a built-in local model. Works offline; nothing you type leaves your machine.">
+  <meta property="og:url" content="https://osman19702.github.io/PromptFixer/">
+  <meta property="og:image" content="https://osman19702.github.io/PromptFixer/promptfixer.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="750">
+  <meta property="og:image:alt" content="The PromptFixer window: a prompt scored 42 in the editor and its rewrite scored 93 on the Fixed tab, with one passage marked to keep and one to change.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PromptFixer — lint, score and rewrite LLM prompts, offline">
+  <meta name="twitter:description" content="A desktop app that lints, scores and rewrites LLM prompts with a built-in local model. Works offline; nothing you type leaves your machine.">
+  <meta name="twitter:image" content="https://osman19702.github.io/PromptFixer/promptfixer.png">
+  <meta name="twitter:image:alt" content="The PromptFixer window: a prompt scored 42 in the editor and its rewrite scored 93 on the Fixed tab, with one passage marked to keep and one to change.">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="./">
+        <img src="./icon.svg" alt="" width="32" height="32">
+        <span class="brand-name">PromptFixer</span>
+        <span class="brand-tagline">lint · score · rewrite</span>
+      </a>
+      <!-- The links follow the page's order, and the download is the header's one button so
+           that it stays one click away once the hero has scrolled off. -->
+      <nav aria-label="Site">
+        <a href="#how-it-works">How it works</a>
+        <a href="#whats-new">What's new</a>
+        <a href="https://github.com/Osman19702/PromptFixer">GitHub</a>
+        <a class="button primary small" href="#download">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container">
+        <p class="eyebrow"><span class="nowrap">Windows desktop app</span> · <span class="nowrap">Open source, MIT</span></p>
+        <h1 id="hero-title">Lint, score and rewrite your LLM prompts. Offline.</h1>
+        <p class="lede">
+          PromptFixer scores a prompt against about thirty <span class="nowrap">prompt-engineering</span> rules, then a
+          <strong>built-in local model</strong> rewrites it and the rewrite is scored again, so you can
+          see whether it really got better. It works offline, nothing you type leaves your machine, and
+          an automated test checks that on every push.
+        </p>
+        <div class="cta">
+          <a id="download-button" class="button primary" href="https://github.com/Osman19702/PromptFixer/releases/latest">Download for Windows</a>
+          <a class="button" href="https://github.com/Osman19702/PromptFixer">View on GitHub</a>
+        </div>
+        <p class="requirements">
+          <span id="dl-hero-size"></span>Windows 10 or 11, 64-bit. The 2.5 GB model downloads on first run; after that it works offline.
+        </p>
+        <figure class="screenshot">
+          <img src="./promptfixer.png" width="1200" height="750"
+               alt="The PromptFixer window: a prompt scored 42 in the editor and its rewrite scored 93 on the Fixed tab, with one passage marked to keep and one to change.">
+          <figcaption>
+            A five-word prompt scored 42; its rewrite scored 93. One passage is marked to keep and one to
+            change, ready for <strong>Fix again with my marks</strong>.
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="how-it-works" class="section" aria-labelledby="how-title">
+      <div class="container">
+        <h2 id="how-title">How it works</h2>
+        <p class="section-lede">Three steps, and the score stays comparable through all of them.</p>
+        <!-- role="list" because list-style: none costs a list its role in WebKit. -->
+        <ol class="steps" role="list">
+          <li class="card">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Paste</h3>
+            <p>
+              Paste a prompt and it is scored instantly against about thirty prompt-engineering rules,
+              with the findings grouped by category and severity. The linter is deterministic and local:
+              no model is involved, and nothing is sent anywhere.
+            </p>
+          </li>
+          <li class="card">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Fix</h3>
+            <p>
+              Press <strong>Fix prompt</strong> and the local model rewrites it. The rewrite is scored
+              again with the same rules, next to a word-level diff and a change log that explains every
+              edit. Choose a strength, <strong>Light touch</strong>, <strong>Balanced</strong> or
+              <strong>Full rebuild</strong>, and a guard retries a rewrite that changed too much or pasted
+              its own instructions into the output.
+            </p>
+          </li>
+          <li class="card">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Mark and fix again</h3>
+            <p>
+              Not quite what you wanted? Select a passage of the rewrite and mark it <strong>Keep it — I
+              loved it</strong> or <strong>Change it — I didn't like it</strong>, then press <strong>Fix
+              again with my marks</strong>. What you kept comes back word for word, what you disliked is
+              reworded, and the result is still scored against the prompt you wrote.
+            </p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="features" class="section section-soft" aria-labelledby="features-title">
+      <div class="container">
+        <h2 id="features-title">What you get</h2>
+        <p class="section-lede">Scoring is instant and local; the rewrite needs the model downloaded once.</p>
+        <ul class="features" role="list">
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>Private by design</h3>
+            <p>
+              The default model runs on your machine. There is no telemetry, no analytics, no crash
+              reporting, no licence check and no update check.
+              <a href="https://github.com/Osman19702/PromptFixer/blob/master/docs/PRIVACY.md">docs/PRIVACY.md</a>
+              names every host the app can reach, and when.
+            </p>
+          </li>
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>Built-in local model</h3>
+            <p>
+              Qwen3-4B-Instruct-2507 (2.5 GB) by default, with a 1 GB <em>lite</em> tier for machines with
+              4 GB of RAM and a 4.7 GB <em>quality</em> tier. CUDA, Vulkan or Metal is picked automatically,
+              with a CPU fallback.
+            </p>
+          </li>
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>Watch the rewrite arrive</h3>
+            <p>
+              The rewrite streams into the Fixed tab as the model writes it, and the spinner names which
+              wait you are in: queued behind another job, loading the model, writing, or a second attempt
+              after a failed quality check.
+            </p>
+          </li>
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>A library that teaches the model</h3>
+            <p>
+              Save a prompt with its rewrite, and your saved rewrites are shown to the model as examples of
+              how much change you like. Export the library as JSON and import it on another machine, merged
+              without overwriting anything.
+            </p>
+          </li>
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>Diff and change log</h3>
+            <p>
+              Every rewrite comes with a word-level diff and a change log explaining each edit, and is scored
+              before and after with identical rules, which is what makes the comparison meaningful.
+            </p>
+          </li>
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>Cloud providers, optional</h3>
+            <p>
+              Anthropic, OpenAI, OpenRouter, Gemini, Ollama or any OpenAI-compatible endpoint, switched on
+              with a <code>.env</code> file. Off by default, and nothing requires them.
+            </p>
+          </li>
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>Lint prompts in CI</h3>
+            <p>
+              <code>npm run lint:prompts</code> runs the same rules over your prompt files and exits
+              non-zero when one falls below the bar. No server, no model, no API key.
+            </p>
+          </li>
+          <li class="card">
+            <h3><span class="dot" aria-hidden="true"></span>Tested on every push</h3>
+            <p>
+              Unit and component tests, an acceptance suite that drives the real app in a browser and in
+              Electron, and a visual check with
+              <a href="https://github.com/Osman19702/elastishot">Elastishot</a> that names the element behind
+              every difference it finds.
+            </p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="download" class="section" aria-labelledby="download-title">
+      <div class="container">
+        <h2 id="download-title">Download</h2>
+        <p class="section-lede">One file, no account, nothing to install first. Windows 10 or 11, 64-bit.</p>
+        <div class="download-grid">
+          <div id="download-card" class="card download-card" data-state="fallback">
+            <p id="newer-notice" class="notice" hidden></p>
+            <h3 id="dl-title">Latest release</h3>
+            <p class="muted needs-data">Published <time id="dl-date"></time></p>
+            <p class="cta-row">
+              <a id="dl-link" class="button primary" href="https://github.com/Osman19702/PromptFixer/releases/latest">Download the latest release from GitHub</a>
+            </p>
+            <dl class="facts needs-data">
+              <div class="fact">
+                <dt>File</dt>
+                <dd><code id="dl-file"></code></dd>
+              </div>
+              <div class="fact">
+                <dt>Size</dt>
+                <dd id="dl-size"></dd>
+              </div>
+              <div class="fact" id="dl-sha-row">
+                <dt>SHA-256</dt>
+                <dd>
+                  <code id="dl-sha" class="hash"></code>
+                  <span class="hash-tools">
+                    <button type="button" id="dl-copy" class="button small">Copy</button>
+                    <span id="dl-copied" class="status" role="status" aria-live="polite"></span>
+                    <a id="dl-sums" href="https://github.com/Osman19702/PromptFixer/releases">SHA256SUMS.txt</a>
+                  </span>
+                </dd>
+              </div>
+            </dl>
+            <p class="links">
+              <a href="https://github.com/Osman19702/PromptFixer/blob/master/docs/INSTALL.md">Full install guide</a>
+              <a href="https://github.com/Osman19702/PromptFixer/releases">All releases</a>
+            </p>
+          </div>
+
+          <aside class="card aside" aria-labelledby="source-title">
+            <h3 id="source-title">Run from source</h3>
+            <p>Needs Node 20 or newer and about 3 GB of disk. Three commands:</p>
+            <pre><code>npm install
+npm run setup
+npm run desktop</code></pre>
+            <p>
+              <code>npm run setup</code> downloads the model once, resumably. After that the app runs with
+              no internet connection.
+            </p>
+          </aside>
+
+          <section class="card before" aria-labelledby="before-title">
+            <h3 id="before-title">Before you run it</h3>
+            <div class="before-grid">
+              <div>
+                <h4>Check the download</h4>
+                <p>
+                  In PowerShell, from the folder you saved it to. The result must equal the SHA-256 of the
+                  release<span class="needs-data" id="dl-sha-note">, shown on the download card</span>, which is also in
+                  <code>SHA256SUMS.txt</code> on its release page.
+                </p>
+                <pre><code id="dl-verify">(Get-FileHash .\PromptFixer-&lt;version&gt;-win-x64.exe).Hash.ToLower()</code></pre>
+              </div>
+              <div>
+                <h4>Not code-signed yet</h4>
+                <p>
+                  Windows shows a blue <strong>"Windows protected your PC"</strong> screen because the
+                  installer is not code-signed. Click <strong>More info</strong>, then <strong>Run
+                  anyway</strong>, once the hash matches.
+                </p>
+              </div>
+              <div>
+                <h4>Upgrading</h4>
+                <p>
+                  Your library and the downloaded model live outside the app and survive uninstalling and
+                  reinstalling.
+                </p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section id="whats-new" class="section section-soft" aria-labelledby="whats-new-title">
+      <div class="container">
+        <h2 id="whats-new-title">What's new</h2>
+        <p class="section-lede">Every release, newest first, with the notes as they were published.</p>
+        <p id="releases-fallback" class="fallback">
+          The release notes could not be loaded on this page. Read them on the
+          <a href="https://github.com/Osman19702/PromptFixer/releases">GitHub releases page</a>.
+        </p>
+        <div id="releases" class="releases"></div>
+        <p class="links">
+          <a href="https://github.com/Osman19702/PromptFixer/blob/master/CHANGELOG.md">Full changelog on GitHub</a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-row">
+      <nav aria-label="Project links" class="footer-links">
+        <a href="https://github.com/Osman19702/PromptFixer">GitHub</a>
+        <a href="https://github.com/Osman19702/PromptFixer/issues">Issues</a>
+        <a href="https://github.com/Osman19702/PromptFixer/blob/master/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Osman19702/PromptFixer/blob/master/docs/PRIVACY.md">Privacy</a>
+        <a href="https://github.com/Osman19702/PromptFixer/blob/master/docs/INSTALL.md">Install guide</a>
+        <a href="https://github.com/Osman19702/PromptFixer/blob/master/LICENSE">MIT licence</a>
+      </nav>
+      <p class="byline">PromptFixer by <a href="https://www.osmanturalioglu.com/">Osman Turalioglu</a></p>
+    </div>
+  </footer>
+</body>
+</html>

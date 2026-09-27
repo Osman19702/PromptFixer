@@ -4,7 +4,7 @@ This page is for whoever approves software where you work. It states exactly wha
 sends, where it stores what you write, and which of those statements is checked automatically on
 every build.
 
-As of version 0.2.0.
+As of version 0.4.0.
 
 ## The short version
 
@@ -49,6 +49,11 @@ This is the complete list. Every one is in the source and nothing else is.
 | A host you type yourself | Only if you configure `COMPATIBLE_BASE_URL` | Your prompt, wherever you pointed it |
 
 With no key configured and the built-in model selected — the default — none of these is contacted.
+
+The **What's new** link in the top bar opens
+[osman19702.github.io/PromptFixer](https://osman19702.github.io/PromptFixer/) in your own browser
+when you click it; that is where the latest release and its notes are. The app itself never
+requests that address: there is still no update check, and scenario F11 still holds.
 
 ## How the claim is checked
 

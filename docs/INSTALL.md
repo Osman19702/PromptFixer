@@ -13,8 +13,9 @@ install first, no Node.js, no command line, no account.
 
 ## Install
 
-1. Download **PromptFixer-0.3.0-win-x64.exe** from the
-   [v0.3.0 release page](https://github.com/Osman19702/PromptFixer/releases/tag/v0.3.0) or from the
+1. Download **PromptFixer-0.3.0-win-x64.exe**: press **Download** on
+   [osman19702.github.io/PromptFixer](https://osman19702.github.io/PromptFixer/), or take it from
+   the [v0.3.0 release page](https://github.com/Osman19702/PromptFixer/releases/tag/v0.3.0) or the
    download button on [osmanturalioglu.com](https://www.osmanturalioglu.com/).
 2. Double-click it. Windows may show a blue **"Windows protected your PC"** screen because the
    installer is not yet code-signed. Click **More info**, then **Run anyway**. (To check the file
@@ -66,3 +67,7 @@ are left in place. Delete the two folders above if you want them gone too.
 - **Slow fixes (over a minute)** — you are probably on CPU. Check the chip under the editor after the
   first fix: it names the backend. Switch to the lite model, or add a cloud provider.
 - **The download stopped** — click Download again; it resumes where it left off.
+- **Is there a newer version, and what changed?** — The website,
+  [osman19702.github.io/PromptFixer](https://osman19702.github.io/PromptFixer/), has the latest
+  download and the notes of every release; from 0.4.0, **What's new** in the app's top bar opens
+  it. The app never checks for updates by itself.

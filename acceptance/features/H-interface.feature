@@ -72,3 +72,10 @@ Feature: H — The editor and the results interface
   Scenario: H14 — Every action without a visible result reports itself
     When I save, import, export, copy and apply
     Then each shows a confirmation stating the outcome
+
+  Scenario: H15 — The interface links to the project website, and the link leaves the app the safe way
+    Given the server names the project website in its config
+    When I open the app
+    Then the top bar offers a "What's new" link to that address, marked to open outside the app
+    When I click it
+    Then the website opens in a page of its own and the editor is still where I left it

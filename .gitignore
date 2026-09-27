@@ -9,3 +9,4 @@ release/
 .promptfixer/
 acceptance/report/out/
 .elastishot/
+site/releases.json

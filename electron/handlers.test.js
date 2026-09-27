@@ -2,9 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
-import { installQuitHandler, willNavigateGuard } from './handlers.js'
+import { installQuitHandler, willNavigateGuard, windowOpenGuard } from './handlers.js'
 
 const ORIGIN = 'http://127.0.0.1:4321'
+const SITE = 'https://osman19702.github.io/PromptFixer/'
 
 function fakeShell() {
   const opened = []
@@ -51,6 +52,29 @@ test('will-navigate: a lookalike origin does not pass the prefix check', () => {
   const event = fakeEvent()
   willNavigateGuard(ORIGIN, shell)(event, `${ORIGIN}0/evil`)
   assert.equal(event.prevented, true)
+})
+
+test('window-open: an https link is handed to the system browser and denied in-app', () => {
+  const shell = fakeShell()
+  const result = windowOpenGuard(shell)({ url: SITE })
+  assert.deepEqual(result, { action: 'deny' })
+  assert.deepEqual(shell.opened, [SITE])
+})
+
+test('window-open: a file:// URL is denied and not opened', () => {
+  const shell = fakeShell()
+  const result = windowOpenGuard(shell)({ url: 'file:///C:/Users/me/notes.txt' })
+  assert.deepEqual(result, { action: 'deny' })
+  assert.deepEqual(shell.opened, [])
+})
+
+test('window-open: the answer is deny whatever the URL', () => {
+  const shell = fakeShell()
+  const guard = windowOpenGuard(shell)
+  for (const url of ['http://example.com/', SITE, 'file:///etc/passwd', 'javascript:alert(1)', 'about:blank', '']) {
+    assert.deepEqual(guard({ url }), { action: 'deny' }, url)
+  }
+  assert.deepEqual(shell.opened, ['http://example.com/', SITE], 'only the http(s) ones reached the shell')
 })
 
 /** An `app` that behaves like Electron's: quit() re-emits before-quit. */

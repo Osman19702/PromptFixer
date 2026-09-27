@@ -19,6 +19,21 @@ export function willNavigateGuard(origin, shell) {
 }
 
 /**
+ * `setWindowOpenHandler` guard. To Chromium a target=_blank anchor is a
+ * window.open — the path the What's new link in the top bar takes — and so is
+ * anything a page script asks for. No second window of this app is ever
+ * opened: an http(s) URL goes to the system browser, everything else (a
+ * file:, a javascript:, a lookalike scheme) is dropped, and the answer is
+ * deny either way.
+ */
+export function windowOpenGuard(shell) {
+  return ({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  }
+}
+
+/**
  * Deterministic shutdown. Electron does not await an async `before-quit`
  * listener, so `await unload()` there just races process teardown. Instead:
  * cancel the first quit, unload (bounded by `timeoutMs` so a wedged dispose

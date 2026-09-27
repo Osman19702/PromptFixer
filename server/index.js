@@ -27,7 +27,7 @@ import {
 } from './metaprompt.js'
 import { ProviderError, complete, listModels, providerStatus, redact } from './providers.js'
 import * as store from './store.js'
-import { VERSION } from './version.js'
+import { HOMEPAGE, VERSION } from './version.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // PORT=0 is valid (OS-assigned port), so don't treat 0 as "unset".
@@ -169,6 +169,11 @@ app.get('/api/config', (_req, res) => {
     // so a bug report names the build it came from. Same source as
     // /api/health: package.json, the one place the version is written down.
     version: VERSION,
+    // The project website, for the "What's new" link in the top bar. The
+    // interface links to it and nothing ever fetches it: a link the user
+    // opens in their own browser is not an update check, and docs/PRIVACY.md
+    // promises there is none.
+    homepage: HOMEPAGE,
     providers: providerStatus(),
     defaultProvider: DEFAULT_PROVIDER,
     desktop: process.env.PROMPTFIXER_DESKTOP === '1',
